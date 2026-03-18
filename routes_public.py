@@ -3,7 +3,8 @@ import logging
 
 from flask import Blueprint, render_template, send_file, current_app
 
-from models import db, Category, Pdf
+from extensions import db
+from models import Category, Pdf
 
 logger = logging.getLogger(__name__)
 

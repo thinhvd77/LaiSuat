@@ -2,9 +2,8 @@ from datetime import datetime, timezone
 
 import bcrypt
 from flask_login import UserMixin
-from flask_sqlalchemy import SQLAlchemy
 
-db = SQLAlchemy()
+from extensions import db
 
 
 class Category(db.Model):

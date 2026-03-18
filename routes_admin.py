@@ -15,6 +15,7 @@ from flask import (
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 
+from extensions import limiter
 from models import db, Admin, Category, Pdf
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
 
 @admin_bp.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("admin.dashboard"))

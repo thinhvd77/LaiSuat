@@ -4,16 +4,9 @@ import logging
 from datetime import timedelta
 
 from flask import Flask
-from flask_login import LoginManager
-from flask_wtf import CSRFProtect
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
-from models import db, Admin
-
-login_manager = LoginManager()
-csrf = CSRFProtect()
-limiter = Limiter(key_func=get_remote_address, default_limits=[])
+from extensions import db, login_manager, csrf, limiter
+from models import Admin
 
 
 @login_manager.user_loader

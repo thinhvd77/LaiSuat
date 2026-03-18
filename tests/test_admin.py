@@ -1,4 +1,5 @@
-from models import db, Admin
+from extensions import db
+from models import Admin
 
 
 class TestLogin:
@@ -298,3 +299,25 @@ class TestPdfUploadDelete:
     def test_upload_requires_auth(self, client):
         resp = client.post("/admin/pdfs", data={})
         assert resp.status_code == 302
+
+
+class TestRateLimiting:
+    def test_login_rate_limit(self, app, client):
+        """After 5 failed logins, should be rate limited."""
+        with app.app_context():
+            admin = Admin(username="admin")
+            admin.set_password("admin123")
+            db.session.add(admin)
+            db.session.commit()
+
+        for _ in range(5):
+            client.post(
+                "/admin/login",
+                data={"username": "admin", "password": "wrong"},
+            )
+
+        resp = client.post(
+            "/admin/login",
+            data={"username": "admin", "password": "wrong"},
+        )
+        assert resp.status_code == 429

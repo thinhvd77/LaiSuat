@@ -3,7 +3,7 @@ import shutil
 import tempfile
 import pytest
 from app import create_app
-from models import db as _db
+from extensions import db as _db
 
 
 @pytest.fixture
