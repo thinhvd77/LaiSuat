@@ -1,4 +1,6 @@
 import logging
+import os
+import uuid
 
 from flask import (
     Blueprint,
@@ -8,8 +10,10 @@ from flask import (
     url_for,
     flash,
     session,
+    current_app,
 )
 from flask_login import login_user, logout_user, login_required, current_user
+from werkzeug.utils import secure_filename
 
 from models import db, Admin, Category, Pdf
 
@@ -139,3 +143,92 @@ def delete_category(cat_id):
     logger.info("Category deleted: %s (by %s)", cat.name, current_user.username)
     return {"message": "Đã xóa danh mục"}, 200
 
+
+def _validate_pdf(file_storage):
+    """Validate file is a PDF by extension and magic bytes."""
+    if not file_storage or not file_storage.filename:
+        return False, "Không có file"
+
+    filename = file_storage.filename.lower()
+    if not filename.endswith(".pdf"):
+        return False, "Chỉ chấp nhận file PDF"
+
+    # Check magic bytes
+    header = file_storage.read(5)
+    file_storage.seek(0)
+    if header != b"%PDF-":
+        return False, "Chỉ chấp nhận file PDF"
+
+    return True, None
+
+
+@admin_bp.route("/pdfs", methods=["POST"])
+@login_required
+def upload_pdf():
+    title = request.form.get("title", "").strip()
+    category_id = request.form.get("category_id")
+    file = request.files.get("file")
+
+    if not title:
+        return {"error": "Tên tài liệu là bắt buộc"}, 400
+
+    if not category_id:
+        return {"error": "Danh mục là bắt buộc"}, 400
+
+    cat = db.session.get(Category, int(category_id))
+    if not cat:
+        return {"error": "Không tìm thấy danh mục"}, 404
+
+    valid, error_msg = _validate_pdf(file)
+    if not valid:
+        return {"error": error_msg}, 400
+
+    # Sanitize filename with UUID prefix
+    original = secure_filename(file.filename)
+    safe_filename = f"{uuid.uuid4().hex[:8]}-{original}"
+
+    filepath = os.path.join(current_app.config["UPLOAD_FOLDER"], safe_filename)
+    file.save(filepath)
+    file_size = os.path.getsize(filepath)
+
+    pdf = Pdf(
+        category_id=cat.id,
+        title=title,
+        filename=safe_filename,
+        file_size=file_size,
+        uploaded_by=current_user.id,
+    )
+    db.session.add(pdf)
+    db.session.commit()
+
+    logger.info(
+        "PDF uploaded: %s → %s (by %s)",
+        title,
+        safe_filename,
+        current_user.username,
+    )
+    return pdf.to_dict(), 201
+
+
+@admin_bp.route("/pdfs/<int:pdf_id>", methods=["DELETE"])
+@login_required
+def delete_pdf(pdf_id):
+    pdf = db.session.get(Pdf, pdf_id)
+    if not pdf:
+        return {"error": "Không tìm thấy tài liệu"}, 404
+
+    # Remove file from disk
+    filepath = os.path.join(current_app.config["UPLOAD_FOLDER"], pdf.filename)
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
+    logger.info(
+        "PDF deleted: %s / %s (by %s)",
+        pdf.title,
+        pdf.filename,
+        current_user.username,
+    )
+    db.session.delete(pdf)
+    db.session.commit()
+
+    return {"message": "Đã xóa tài liệu"}, 200

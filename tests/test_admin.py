@@ -183,3 +183,118 @@ class TestCategoryCRUD:
     def test_category_crud_requires_auth(self, client):
         resp = client.post("/admin/categories", json={"name": "X"})
         assert resp.status_code == 302  # redirect to login
+
+
+import io
+import os
+
+
+class TestPdfUploadDelete:
+    def _make_pdf_bytes(self):
+        """Minimal valid PDF content (starts with %PDF-)."""
+        return b"%PDF-1.4 fake pdf content for testing"
+
+    def test_upload_pdf(self, app, auth_client):
+        # Create a category first
+        resp = auth_client.post(
+            "/admin/categories",
+            json={"name": "Test Cat", "icon": "📄"},
+        )
+        cat_id = resp.get_json()["id"]
+
+        data = {
+            "title": "Lãi suất tháng 3",
+            "category_id": str(cat_id),
+            "file": (io.BytesIO(self._make_pdf_bytes()), "test.pdf"),
+        }
+        resp = auth_client.post(
+            "/admin/pdfs",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 201
+        result = resp.get_json()
+        assert result["title"] == "Lãi suất tháng 3"
+
+        # Verify file exists on disk
+        with app.app_context():
+            filepath = os.path.join(
+                app.config["UPLOAD_FOLDER"], result["filename"]
+            )
+            assert os.path.exists(filepath)
+
+    def test_upload_non_pdf_rejected(self, app, auth_client):
+        resp = auth_client.post(
+            "/admin/categories",
+            json={"name": "Test Cat", "icon": "📄"},
+        )
+        cat_id = resp.get_json()["id"]
+
+        data = {
+            "title": "Not a PDF",
+            "category_id": str(cat_id),
+            "file": (io.BytesIO(b"not a pdf file"), "test.txt"),
+        }
+        resp = auth_client.post(
+            "/admin/pdfs",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 400
+
+    def test_upload_fake_pdf_extension_rejected(self, app, auth_client):
+        resp = auth_client.post(
+            "/admin/categories",
+            json={"name": "Test Cat", "icon": "📄"},
+        )
+        cat_id = resp.get_json()["id"]
+
+        data = {
+            "title": "Fake PDF",
+            "category_id": str(cat_id),
+            "file": (io.BytesIO(b"not actually pdf"), "fake.pdf"),
+        }
+        resp = auth_client.post(
+            "/admin/pdfs",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 400
+
+    def test_delete_pdf(self, app, auth_client):
+        # Create category + upload PDF
+        resp = auth_client.post(
+            "/admin/categories",
+            json={"name": "Test Cat", "icon": "📄"},
+        )
+        cat_id = resp.get_json()["id"]
+
+        data = {
+            "title": "To Delete",
+            "category_id": str(cat_id),
+            "file": (io.BytesIO(self._make_pdf_bytes()), "delete-me.pdf"),
+        }
+        resp = auth_client.post(
+            "/admin/pdfs",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        pdf_data = resp.get_json()
+        pdf_id = pdf_data["id"]
+
+        with app.app_context():
+            filepath = os.path.join(
+                app.config["UPLOAD_FOLDER"], pdf_data["filename"]
+            )
+            assert os.path.exists(filepath)
+
+        # Delete
+        resp = auth_client.delete(f"/admin/pdfs/{pdf_id}")
+        assert resp.status_code == 200
+
+        # Verify file removed from disk
+        assert not os.path.exists(filepath)
+
+    def test_upload_requires_auth(self, client):
+        resp = client.post("/admin/pdfs", data={})
+        assert resp.status_code == 302
