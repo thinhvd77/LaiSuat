@@ -525,14 +525,15 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing:
    PUBLIC PAGE — Tra cứu lãi suất
    ═══════════════════════════════════════════════════ */
 .public-container {
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 .public-layout {
     display: flex;
     flex: 1;
-    height: calc(100vh - var(--header-height));
+    min-height: 0; /* critical for flex child to respect overflow */
 }
 
 /* Viewer area */
@@ -542,6 +543,8 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing:
     flex-direction: column;
     background: var(--gray-100);
     min-width: 0;
+    min-height: 0; /* allow flex shrink */
+    overflow: hidden;
 }
 .viewer-toolbar {
     display: flex;
@@ -551,6 +554,7 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing:
     background: var(--white);
     border-bottom: 1px solid var(--gray-200);
     min-height: 52px;
+    flex-shrink: 0;
 }
 .viewer-category-name {
     font-family: var(--font-display);
@@ -614,14 +618,15 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing:
    ADMIN PAGE
    ═══════════════════════════════════════════════════ */
 .admin-container {
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 .admin-layout {
     display: flex;
     flex: 1;
-    height: calc(100vh - var(--header-height));
+    min-height: 0;
 }
 
 .admin-main {
