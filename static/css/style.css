@@ -174,3 +174,13 @@ body {
     max-width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     border-radius: 4px;
 }
+
+/* Error pages */
+.error-page {
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    min-height: 100vh; text-align: center;
+}
+.error-page h1 { font-size: 72px; color: #ddd; margin-bottom: 8px; }
+.error-page p { color: #666; margin-bottom: 20px; }
+

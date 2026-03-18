@@ -3,7 +3,7 @@ import sys
 import logging
 from datetime import timedelta
 
-from flask import Flask
+from flask import Flask, render_template
 
 from extensions import db, login_manager, csrf, limiter
 from models import Admin
@@ -72,6 +72,18 @@ def create_app(test_config=None):
 
     from routes_public import public_bp
     app.register_blueprint(public_bp)
+
+    @app.errorhandler(404)
+    def not_found(e):
+        return render_template("errors/404.html"), 404
+
+    @app.errorhandler(413)
+    def too_large(e):
+        return render_template("errors/413.html"), 413
+
+    @app.errorhandler(500)
+    def server_error(e):
+        return render_template("errors/500.html"), 500
 
     return app
 

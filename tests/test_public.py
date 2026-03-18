@@ -159,3 +159,14 @@ class TestServePdf:
 
         resp = client.get(f"/pdf/{pdf_id}")
         assert resp.status_code == 404
+
+
+class TestErrorPages:
+    def test_404_page(self, client):
+        resp = client.get("/nonexistent-page")
+        assert resp.status_code == 404
+        assert "Không tìm thấy".encode() in resp.data
+
+    def test_404_missing_pdf(self, client):
+        resp = client.get("/pdf/99999")
+        assert resp.status_code == 404
