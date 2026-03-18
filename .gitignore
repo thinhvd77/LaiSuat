@@ -1,4 +1,6 @@
 .superpowers/
 database.db
-uploads/
 __pycache__/
+venv/
+*.pyc
+uploads/*.pdf
