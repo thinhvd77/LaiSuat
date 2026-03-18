@@ -73,6 +73,10 @@ def create_app(test_config=None):
     # Ensure upload dir exists
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
+    # Register blueprints
+    from routes_admin import admin_bp
+    app.register_blueprint(admin_bp)
+
     return app
 
 
