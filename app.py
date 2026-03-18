@@ -77,6 +77,9 @@ def create_app(test_config=None):
     from routes_admin import admin_bp
     app.register_blueprint(admin_bp)
 
+    from routes_public import public_bp
+    app.register_blueprint(public_bp)
+
     return app
 
 
