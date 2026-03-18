@@ -6,6 +6,23 @@ let pdfDoc = null;
 const pdfjsLib = await import("/static/pdfjs/pdf.min.mjs");
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/static/pdfjs/pdf.worker.min.mjs";
 
+// ─── Mobile Sidebar ───
+const sidebarToggle = document.getElementById("sidebar-toggle");
+const sidebar = document.getElementById("sidebar");
+const overlay = document.getElementById("sidebar-overlay");
+
+function openSidebar() {
+    sidebar.classList.add("open");
+    overlay.classList.add("active");
+}
+function closeSidebar() {
+    sidebar.classList.remove("open");
+    overlay.classList.remove("active");
+}
+
+if (sidebarToggle) sidebarToggle.addEventListener("click", openSidebar);
+if (overlay) overlay.addEventListener("click", closeSidebar);
+
 // ─── Categories ───
 async function loadCategories() {
     const resp = await fetch("/api/categories");
@@ -13,8 +30,14 @@ async function loadCategories() {
 
     const list = document.getElementById("category-list");
     if (cats.length === 0) {
-        list.innerHTML = '<p class="empty-state">Chưa có danh mục lãi suất nào.</p>';
-        document.getElementById("viewer-empty").textContent = "Chưa có danh mục lãi suất nào.";
+        list.innerHTML = `<p class="empty-state">
+            <span class="empty-state-icon">📋</span>
+            Chưa có danh mục lãi suất nào.
+        </p>`;
+        document.getElementById("viewer-empty").innerHTML = `
+            <span class="empty-state-icon">📊</span>
+            Chưa có danh mục lãi suất nào.
+        `;
         return;
     }
 
@@ -34,6 +57,7 @@ async function loadCategories() {
             currentCategoryId = parseInt(el.dataset.id);
             loadCategories();
             loadPdfs(currentCategoryId);
+            closeSidebar();
         });
     });
 
@@ -62,7 +86,10 @@ async function loadPdfs(categoryId) {
 
     if (pdfs.length === 0) {
         toolbar.style.display = "none";
-        viewerEmpty.textContent = "Chưa có tài liệu nào trong danh mục này.";
+        viewerEmpty.innerHTML = `
+            <span class="empty-state-icon">📄</span>
+            Chưa có tài liệu nào trong danh mục này.
+        `;
         viewerEmpty.style.display = "block";
         clearPdfViewer();
         return;
@@ -105,8 +132,10 @@ async function renderPdf(pdfId) {
             await page.render({ canvasContext: ctx, viewport }).promise;
         }
     } catch (err) {
-        container.innerHTML =
-            '<p class="empty-state">Không tìm thấy tài liệu. Vui lòng liên hệ quản trị viên.</p>';
+        container.innerHTML = `<p class="empty-state">
+            <span class="empty-state-icon">⚠️</span>
+            Không tìm thấy tài liệu. Vui lòng liên hệ quản trị viên.
+        </p>`;
     }
 }
 

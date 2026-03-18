@@ -3,15 +3,29 @@
 
 {% block content %}
 <div class="public-container">
-    <header class="public-header">
-        <h1>📊 Tra cứu lãi suất</h1>
+    <header class="app-header">
+        <div class="app-header-left">
+            <button class="hamburger" id="sidebar-toggle" aria-label="Mở danh mục">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+            <img src="{{ url_for('static', filename='images/logo_2.png') }}" alt="Logo" class="app-header-logo">
+            <div class="app-header-divider"></div>
+            <span class="app-header-title">Tra cứu lãi suất</span>
+        </div>
     </header>
 
     <div class="public-layout">
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
         <aside class="sidebar" id="sidebar">
-            <div class="sidebar-title">Danh mục</div>
-            <div id="category-list">
-                <p class="empty-state">Đang tải...</p>
+            <div class="sidebar-header">
+                <span class="sidebar-title">Danh mục</span>
+            </div>
+            <div class="sidebar-items" id="category-list">
+                <div class="loading"></div>
             </div>
         </aside>
 
@@ -22,7 +36,8 @@
             </div>
             <div id="pdf-viewer" class="pdf-viewer">
                 <p class="empty-state" id="viewer-empty">
-                    Chưa có danh mục lãi suất nào.
+                    <span class="empty-state-icon">📊</span>
+                    Chọn danh mục để xem lãi suất
                 </p>
             </div>
         </main>

@@ -2,8 +2,9 @@
 {% block title %}413 — File quá lớn{% endblock %}
 {% block content %}
 <div class="error-page">
+    <img src="{{ url_for('static', filename='images/logo_2.png') }}" alt="" class="error-page-logo">
     <h1>413</h1>
-    <p>File vượt quá 16MB</p>
+    <p>File vượt quá giới hạn 16MB cho phép</p>
     <a href="javascript:history.back()" class="btn btn-primary">Quay lại</a>
 </div>
 {% endblock %}

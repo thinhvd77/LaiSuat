@@ -3,30 +3,45 @@
 
 {% block content %}
 <div class="admin-container">
-    <header class="admin-header">
-        <h1>🔧 Admin Panel</h1>
-        <div class="admin-header-right">
-            <span class="admin-user">{{ current_user.username }}</span>
+    <header class="app-header">
+        <div class="app-header-left">
+            <button class="hamburger" id="admin-sidebar-toggle" aria-label="Mở danh mục">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+            <img src="{{ url_for('static', filename='images/logo_2.png') }}" alt="Logo" class="app-header-logo">
+            <div class="app-header-divider"></div>
+            <span class="app-header-title">Admin Panel</span>
+        </div>
+        <div class="app-header-right">
+            <span class="app-header-user">{{ current_user.username }}</span>
             <a href="{{ url_for('admin.change_password') }}" class="btn btn-sm">Đổi mật khẩu</a>
             <form method="POST" action="{{ url_for('admin.logout') }}" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-sm btn-danger">Đăng xuất</button>
+                <button type="submit" class="btn btn-sm">Đăng xuất</button>
             </form>
         </div>
     </header>
 
     <div class="admin-layout">
+        <div class="sidebar-overlay" id="admin-sidebar-overlay"></div>
         <aside class="sidebar" id="admin-sidebar">
             <div class="sidebar-header">
                 <span class="sidebar-title">Danh mục</span>
                 <button class="btn btn-sm btn-primary" id="btn-add-category">+ Thêm</button>
             </div>
-            <div id="admin-category-list"></div>
+            <div class="sidebar-items" id="admin-category-list"></div>
         </aside>
 
         <main class="admin-main" id="admin-main">
             <div id="admin-content">
-                <p class="empty-state">Chọn danh mục để quản lý</p>
+                <p class="empty-state">
+                    <span class="empty-state-icon">📂</span>
+                    Chọn danh mục để quản lý
+                </p>
             </div>
         </main>
     </div>
@@ -39,7 +54,7 @@
         <form id="category-form">
             <div class="form-group">
                 <label for="cat-name">Tên danh mục</label>
-                <input type="text" id="cat-name" required>
+                <input type="text" id="cat-name" placeholder="VD: Lãi suất tiết kiệm" required>
             </div>
             <div class="form-group">
                 <label for="cat-icon">Icon</label>
@@ -47,7 +62,7 @@
             </div>
             <input type="hidden" id="cat-id">
             <div class="modal-actions">
-                <button type="button" class="btn" id="btn-cancel-category">Hủy</button>
+                <button type="button" class="btn btn-secondary" id="btn-cancel-category">Hủy</button>
                 <button type="submit" class="btn btn-primary">Lưu</button>
             </div>
         </form>
@@ -61,7 +76,7 @@
         <form id="upload-form">
             <div class="form-group">
                 <label for="pdf-title">Tên hiển thị</label>
-                <input type="text" id="pdf-title" required>
+                <input type="text" id="pdf-title" placeholder="VD: Lãi suất tháng 03/2026" required>
             </div>
             <div class="form-group">
                 <label for="pdf-file">Chọn file PDF</label>
@@ -69,7 +84,7 @@
             </div>
             <input type="hidden" id="upload-category-id">
             <div class="modal-actions">
-                <button type="button" class="btn" id="btn-cancel-upload">Hủy</button>
+                <button type="button" class="btn btn-secondary" id="btn-cancel-upload">Hủy</button>
                 <button type="submit" class="btn btn-primary">Upload</button>
             </div>
         </form>

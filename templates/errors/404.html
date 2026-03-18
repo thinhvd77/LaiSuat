@@ -2,8 +2,9 @@
 {% block title %}404 — Không tìm thấy{% endblock %}
 {% block content %}
 <div class="error-page">
+    <img src="{{ url_for('static', filename='images/logo_2.png') }}" alt="" class="error-page-logo">
     <h1>404</h1>
-    <p>Không tìm thấy tài liệu</p>
+    <p>Không tìm thấy tài liệu bạn yêu cầu</p>
     <a href="/" class="btn btn-primary">Về trang chủ</a>
 </div>
 {% endblock %}

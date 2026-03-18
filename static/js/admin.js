@@ -20,12 +20,32 @@ function hideModal(id) {
     document.getElementById(id).style.display = "none";
 }
 
+// ─── Mobile Sidebar ───
+const adminSidebarToggle = document.getElementById("admin-sidebar-toggle");
+const adminSidebar = document.getElementById("admin-sidebar");
+const adminOverlay = document.getElementById("admin-sidebar-overlay");
+
+function openAdminSidebar() {
+    adminSidebar.classList.add("open");
+    adminOverlay.classList.add("active");
+}
+function closeAdminSidebar() {
+    adminSidebar.classList.remove("open");
+    adminOverlay.classList.remove("active");
+}
+
+if (adminSidebarToggle) adminSidebarToggle.addEventListener("click", openAdminSidebar);
+if (adminOverlay) adminOverlay.addEventListener("click", closeAdminSidebar);
+
 // ─── Categories ───
 async function loadCategories() {
     const cats = await api("/api/categories");
     const list = document.getElementById("admin-category-list");
     if (cats.length === 0) {
-        list.innerHTML = '<p class="empty-state">Chưa có danh mục nào</p>';
+        list.innerHTML = `<p class="empty-state">
+            <span class="empty-state-icon">📂</span>
+            Chưa có danh mục nào
+        </p>`;
         return;
     }
     list.innerHTML = cats
@@ -51,6 +71,7 @@ async function loadCategories() {
             currentCategoryId = parseInt(el.dataset.id);
             loadCategories();
             loadPdfs(currentCategoryId);
+            closeAdminSidebar();
         });
     });
 }
@@ -96,8 +117,10 @@ async function deleteCategory(id, event) {
         await api(`/admin/categories/${id}`, { method: "DELETE" });
         if (currentCategoryId === id) {
             currentCategoryId = null;
-            document.getElementById("admin-content").innerHTML =
-                '<p class="empty-state">Chọn danh mục để quản lý</p>';
+            document.getElementById("admin-content").innerHTML = `<p class="empty-state">
+                <span class="empty-state-icon">📂</span>
+                Chọn danh mục để quản lý
+            </p>`;
         }
         loadCategories();
     } catch (e) {
@@ -156,13 +179,16 @@ async function loadPdfs(categoryId) {
 
     let html = `
         <div class="admin-content-header">
-            <h2>${cat.icon} ${cat.name} (${pdfs.length} file)</h2>
+            <h2>${cat.icon} ${cat.name} <span style="font-weight:400;font-size:14px;color:#868E96">(${pdfs.length} file)</span></h2>
             <button class="btn btn-primary btn-sm" onclick="openUploadModal(${categoryId})">+ Upload PDF</button>
         </div>
     `;
 
     if (pdfs.length === 0) {
-        html += '<p class="empty-state">Chưa có tài liệu nào trong danh mục này.</p>';
+        html += `<p class="empty-state">
+            <span class="empty-state-icon">📄</span>
+            Chưa có tài liệu nào trong danh mục này.
+        </p>`;
     } else {
         html += pdfs
             .map(
@@ -173,7 +199,7 @@ async function loadPdfs(categoryId) {
                     <span class="pdf-item-meta">${formatDate(p.uploaded_at)} · ${formatSize(p.file_size)}</span>
                 </div>
                 <div class="pdf-item-actions">
-                    <a href="/pdf/${p.id}" target="_blank" class="btn btn-sm">Xem</a>
+                    <a href="/pdf/${p.id}" target="_blank" class="btn btn-sm btn-secondary">Xem</a>
                     <button class="btn btn-sm btn-danger" onclick="deletePdf(${p.id})">Xóa</button>
                 </div>
             </div>`
