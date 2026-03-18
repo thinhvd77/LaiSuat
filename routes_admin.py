@@ -11,7 +11,7 @@ from flask import (
 )
 from flask_login import login_user, logout_user, login_required, current_user
 
-from models import db, Admin
+from models import db, Admin, Category, Pdf
 
 logger = logging.getLogger(__name__)
 
@@ -83,3 +83,59 @@ def dashboard():
     if current_user.force_password_change:
         return redirect(url_for("admin.change_password"))
     return render_template("admin.html")
+
+
+@admin_bp.route("/categories", methods=["POST"])
+@login_required
+def create_category():
+    data = request.get_json()
+    if not data or not data.get("name"):
+        return {"error": "Tên danh mục là bắt buộc"}, 400
+
+    max_order = db.session.query(db.func.max(Category.sort_order)).scalar() or 0
+    cat = Category(
+        name=data["name"],
+        icon=data.get("icon", "📄"),
+        sort_order=max_order + 1,
+    )
+    db.session.add(cat)
+    db.session.commit()
+    logger.info("Category created: %s (by %s)", cat.name, current_user.username)
+    return cat.to_dict(), 201
+
+
+@admin_bp.route("/categories/<int:cat_id>", methods=["PUT"])
+@login_required
+def update_category(cat_id):
+    cat = db.session.get(Category, cat_id)
+    if not cat:
+        return {"error": "Không tìm thấy danh mục"}, 404
+
+    data = request.get_json()
+    if data.get("name"):
+        cat.name = data["name"]
+    if data.get("icon"):
+        cat.icon = data["icon"]
+    if "sort_order" in data:
+        cat.sort_order = data["sort_order"]
+
+    db.session.commit()
+    logger.info("Category updated: %s (by %s)", cat.name, current_user.username)
+    return cat.to_dict(), 200
+
+
+@admin_bp.route("/categories/<int:cat_id>", methods=["DELETE"])
+@login_required
+def delete_category(cat_id):
+    cat = db.session.get(Category, cat_id)
+    if not cat:
+        return {"error": "Không tìm thấy danh mục"}, 404
+
+    if cat.pdfs.count() > 0:
+        return {"error": "Không thể xóa danh mục còn tài liệu"}, 400
+
+    db.session.delete(cat)
+    db.session.commit()
+    logger.info("Category deleted: %s (by %s)", cat.name, current_user.username)
+    return {"message": "Đã xóa danh mục"}, 200
+
