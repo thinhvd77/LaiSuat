@@ -6,7 +6,7 @@ from datetime import timedelta
 from flask import Flask, render_template
 
 from extensions import db, login_manager, csrf, limiter
-from models import Admin
+from models import Admin, Category
 
 
 @login_manager.user_loader
@@ -61,6 +61,19 @@ def create_app(test_config=None):
             db.session.add(admin)
             db.session.commit()
             app.logger.info("Default admin created: admin / admin123")
+
+        # Seed default parent categories
+        default_parents = [
+            "Lãi suất",
+            "Các chương trình tín dụng ưu đãi",
+            "Phí dịch vụ",
+        ]
+        for i, name in enumerate(default_parents, start=1):
+            if not Category.query.filter_by(name=name, parent_id=None, is_default=True).first():
+                cat = Category(name=name, is_default=True, sort_order=i)
+                db.session.add(cat)
+        db.session.commit()
+
         app.logger.info("Database initialized.")
 
     # Ensure upload dir exists
@@ -99,6 +112,18 @@ if __name__ == "__main__":
                 db.session.add(admin)
                 db.session.commit()
                 print("Default admin created: admin / admin123")
+
+            default_parents = [
+                "Lãi suất",
+                "Các chương trình tín dụng ưu đãi",
+                "Phí dịch vụ",
+            ]
+            for i, name in enumerate(default_parents, start=1):
+                if not Category.query.filter_by(name=name, parent_id=None, is_default=True).first():
+                    cat = Category(name=name, is_default=True, sort_order=i)
+                    db.session.add(cat)
+            db.session.commit()
+
             print("Database initialized.")
     else:
         app.run(debug=True)

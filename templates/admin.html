@@ -53,12 +53,24 @@
         <h2 id="category-modal-title">Thêm danh mục</h2>
         <form id="category-form">
             <div class="form-group">
-                <label for="cat-name">Tên danh mục</label>
-                <input type="text" id="cat-name" placeholder="VD: Lãi suất tiết kiệm" required>
+                <label for="cat-parent-id">Danh mục cha <span class="required">*</span></label>
+                <select id="cat-parent-id" required>
+                    <!-- Populated by JS -->
+                </select>
             </div>
             <div class="form-group">
-                <label for="cat-icon">Icon</label>
-                <input type="text" id="cat-icon" value="📄" maxlength="4">
+                <label for="cat-name">Tên danh mục <span class="required">*</span></label>
+                <input type="text" id="cat-name" placeholder="VD: Lãi suất tiết kiệm" required>
+            </div>
+            <div id="cat-file-section">
+                <div class="form-group">
+                    <label for="cat-file">File PDF <span class="optional">(tùy chọn)</span></label>
+                    <input type="file" id="cat-file" accept=".pdf">
+                </div>
+                <div class="form-group" id="cat-pdf-title-group" style="display:none">
+                    <label for="cat-pdf-title">Tên hiển thị PDF</label>
+                    <input type="text" id="cat-pdf-title" placeholder="VD: Lãi suất tháng 03/2026">
+                </div>
             </div>
             <input type="hidden" id="cat-id">
             <div class="modal-actions">

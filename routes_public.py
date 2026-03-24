@@ -18,8 +18,13 @@ def index():
 
 @public_bp.route("/api/categories")
 def list_categories():
-    categories = Category.query.order_by(Category.sort_order.asc()).all()
-    return [cat.to_dict() for cat in categories]
+    parents = (
+        Category.query
+        .filter(Category.parent_id.is_(None))
+        .order_by(Category.sort_order.asc())
+        .all()
+    )
+    return [p.to_dict() for p in parents]
 
 
 @public_bp.route("/api/categories/<int:cat_id>/pdfs")

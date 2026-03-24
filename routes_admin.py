@@ -94,19 +94,68 @@ def dashboard():
 @admin_bp.route("/categories", methods=["POST"])
 @login_required
 def create_category():
-    data = request.get_json()
-    if not data or not data.get("name"):
+    name = request.form.get("name", "").strip()
+    parent_id = request.form.get("parent_id")
+
+    if not name:
         return {"error": "Tên danh mục là bắt buộc"}, 400
 
-    max_order = db.session.query(db.func.max(Category.sort_order)).scalar() or 0
+    if not parent_id:
+        return {"error": "Danh mục cha là bắt buộc"}, 400
+
+    parent = db.session.get(Category, int(parent_id))
+    if not parent or not parent.is_parent:
+        return {"error": "Danh mục cha không hợp lệ"}, 400
+
+    max_order = (
+        db.session.query(db.func.max(Category.sort_order))
+        .filter(Category.parent_id == parent.id)
+        .scalar()
+        or 0
+    )
     cat = Category(
-        name=data["name"],
-        icon=data.get("icon", "📄"),
+        name=name,
+        parent_id=parent.id,
         sort_order=max_order + 1,
     )
     db.session.add(cat)
     db.session.commit()
-    logger.info("Category created: %s (by %s)", cat.name, current_user.username)
+    logger.info("Category created: %s under %s (by %s)", cat.name, parent.name, current_user.username)
+
+    # Optional: upload PDF file along with the category
+    file = request.files.get("file")
+    if file and file.filename:
+        valid, error_msg = _validate_pdf(file)
+        if not valid:
+            return {"error": error_msg}, 400
+
+        title = request.form.get("pdf_title", "").strip()
+        if not title:
+            title = cat.name  # fallback to category name
+
+        original = secure_filename(file.filename)
+        safe_filename = f"{uuid.uuid4().hex[:8]}-{original}"
+
+        filepath = os.path.join(current_app.config["UPLOAD_FOLDER"], safe_filename)
+        file.save(filepath)
+        file_size = os.path.getsize(filepath)
+
+        pdf = Pdf(
+            category_id=cat.id,
+            title=title,
+            filename=safe_filename,
+            file_size=file_size,
+            uploaded_by=current_user.id,
+        )
+        db.session.add(pdf)
+        db.session.commit()
+        logger.info(
+            "PDF uploaded with category: %s → %s (by %s)",
+            title,
+            safe_filename,
+            current_user.username,
+        )
+
     return cat.to_dict(), 201
 
 
@@ -117,11 +166,12 @@ def update_category(cat_id):
     if not cat:
         return {"error": "Không tìm thấy danh mục"}, 404
 
+    if cat.is_default:
+        return {"error": "Không thể sửa danh mục mặc định"}, 400
+
     data = request.get_json()
     if data.get("name"):
         cat.name = data["name"]
-    if data.get("icon"):
-        cat.icon = data["icon"]
     if "sort_order" in data:
         cat.sort_order = data["sort_order"]
 
@@ -136,6 +186,9 @@ def delete_category(cat_id):
     cat = db.session.get(Category, cat_id)
     if not cat:
         return {"error": "Không tìm thấy danh mục"}, 404
+
+    if cat.is_default:
+        return {"error": "Không thể xóa danh mục mặc định"}, 400
 
     if cat.pdfs.count() > 0:
         return {"error": "Không thể xóa danh mục còn tài liệu"}, 400
@@ -180,6 +233,9 @@ def upload_pdf():
     cat = db.session.get(Category, int(category_id))
     if not cat:
         return {"error": "Không tìm thấy danh mục"}, 404
+
+    if cat.is_parent:
+        return {"error": "Chỉ upload vào danh mục con"}, 400
 
     valid, error_msg = _validate_pdf(file)
     if not valid:

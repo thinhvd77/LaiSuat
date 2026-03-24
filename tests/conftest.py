@@ -25,6 +25,19 @@ def app():
     with app.app_context():
         _db.create_all()
 
+        # Seed default parent categories
+        from models import Category
+
+        default_parents = [
+            "Lãi suất",
+            "Các chương trình tín dụng ưu đãi",
+            "Phí dịch vụ",
+        ]
+        for i, name in enumerate(default_parents, start=1):
+            cat = Category(name=name, is_default=True, sort_order=i)
+            _db.session.add(cat)
+        _db.session.commit()
+
     yield app
 
     os.close(db_fd)

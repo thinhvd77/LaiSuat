@@ -1,6 +1,7 @@
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
 
 let currentCategoryId = null;
+let expandedParents = new Set();
 
 // ─── Helpers ───
 async function api(url, options = {}) {
@@ -37,35 +38,89 @@ function closeAdminSidebar() {
 if (adminSidebarToggle) adminSidebarToggle.addEventListener("click", openAdminSidebar);
 if (adminOverlay) adminOverlay.addEventListener("click", closeAdminSidebar);
 
-// ─── Categories ───
+// ─── Categories (Accordion) ───
+let categoriesData = []; // cache for modal dropdown
+
 async function loadCategories() {
-    const cats = await api("/api/categories");
+    const parents = await api("/api/categories");
+    categoriesData = parents;
     const list = document.getElementById("admin-category-list");
-    if (cats.length === 0) {
+
+    if (parents.length === 0) {
         list.innerHTML = `<p class="empty-state">
             <span class="empty-state-icon">📂</span>
             Chưa có danh mục nào
         </p>`;
         return;
     }
-    list.innerHTML = cats
-        .map(
-            (c) => `
-        <div class="sidebar-item ${c.id === currentCategoryId ? "active" : ""}"
-             data-id="${c.id}">
-            <span class="sidebar-item-text">${c.icon} ${c.name}</span>
-            <span class="sidebar-item-count">${c.pdf_count}</span>
-            <div class="sidebar-item-actions">
-                <button class="btn-icon" title="Lên" onclick="moveCategory(${c.id}, -1, event)">▲</button>
-                <button class="btn-icon" title="Xuống" onclick="moveCategory(${c.id}, 1, event)">▼</button>
-                <button class="btn-icon" title="Sửa" onclick="editCategory(${c.id}, event)">✏️</button>
-                <button class="btn-icon btn-icon-danger" title="Xóa" onclick="deleteCategory(${c.id}, event)">🗑️</button>
-            </div>
-        </div>`
-        )
+
+    // Auto-expand parent of selected child, or first parent
+    if (expandedParents.size === 0) {
+        let found = false;
+        for (const p of parents) {
+            if (currentCategoryId && p.children.some((c) => c.id === currentCategoryId)) {
+                expandedParents.add(p.id);
+                found = true;
+                break;
+            }
+        }
+        if (!found && parents.length > 0) expandedParents.add(parents[0].id);
+    }
+
+    list.innerHTML = parents
+        .map((p) => {
+            const isExpanded = expandedParents.has(p.id);
+            const childrenHtml = p.children
+                .map(
+                    (c) => `
+                <div class="sidebar-item ${c.id === currentCategoryId ? "active" : ""}"
+                     data-id="${c.id}">
+                    <span class="sidebar-item-text">${c.name}</span>
+                    <span class="sidebar-item-count">${c.pdf_count}</span>
+                    <div class="sidebar-item-actions">
+                        <button class="btn-icon" title="Sửa" onclick="editCategory(${c.id}, event)">✏️</button>
+                        <button class="btn-icon btn-icon-danger" title="Xóa" onclick="deleteCategory(${c.id}, event)">🗑️</button>
+                    </div>
+                </div>`
+                )
+                .join("");
+
+            return `
+            <div class="sidebar-group ${isExpanded ? "expanded" : ""}">
+                <div class="sidebar-group-header" data-parent-id="${p.id}">
+                    <span class="sidebar-group-name">${p.name}</span>
+                    <span class="sidebar-group-meta">
+                        <button class="btn-icon btn-icon-add" title="Thêm danh mục con" onclick="openAddCategoryForParent(${p.id}, event)">+</button>
+                        <svg class="sidebar-group-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </span>
+                </div>
+                <div class="sidebar-group-children">
+                    ${childrenHtml || '<p class="sidebar-empty">Chưa có danh mục con</p>'}
+                </div>
+            </div>`;
+        })
         .join("");
 
-    // Click to select
+    // Accordion toggle (DOM-only, no refetch)
+    list.querySelectorAll(".sidebar-group-header").forEach((el) => {
+        el.addEventListener("click", (e) => {
+            // Don't toggle if clicking the add button
+            if (e.target.closest(".btn-icon-add")) return;
+            const parentId = parseInt(el.dataset.parentId);
+            const group = el.closest(".sidebar-group");
+            if (expandedParents.has(parentId)) {
+                expandedParents.delete(parentId);
+                group.classList.remove("expanded");
+            } else {
+                expandedParents.add(parentId);
+                group.classList.add("expanded");
+            }
+        });
+    });
+
+    // Child click → load PDFs
     list.querySelectorAll(".sidebar-item").forEach((el) => {
         el.addEventListener("click", () => {
             currentCategoryId = parseInt(el.dataset.id);
@@ -76,37 +131,52 @@ async function loadCategories() {
     });
 }
 
-async function moveCategory(id, direction, event) {
+// Open add category modal pre-filled with parent
+function openAddCategoryForParent(parentId, event) {
     event.stopPropagation();
-    const cats = await api("/api/categories");
-    const idx = cats.findIndex((c) => c.id === id);
-    const swapIdx = idx + direction;
-    if (swapIdx < 0 || swapIdx >= cats.length) return;
+    document.getElementById("category-modal-title").textContent = "Thêm danh mục";
+    document.getElementById("cat-name").value = "";
+    document.getElementById("cat-id").value = "";
+    document.getElementById("cat-parent-id").value = parentId;
+    // Show file section for new categories
+    document.getElementById("cat-file-section").style.display = "";
+    document.getElementById("cat-file").value = "";
+    document.getElementById("cat-pdf-title").value = "";
+    document.getElementById("cat-pdf-title-group").style.display = "none";
+    // Update parent dropdown
+    _populateParentDropdown(parentId);
+    showModal("category-modal");
+}
 
-    // Swap sort_order
-    await api(`/admin/categories/${cats[idx].id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sort_order: cats[swapIdx].sort_order }),
-    });
-    await api(`/admin/categories/${cats[swapIdx].id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sort_order: cats[idx].sort_order }),
-    });
-    loadCategories();
+function _populateParentDropdown(selectedParentId) {
+    const select = document.getElementById("cat-parent-id");
+    select.innerHTML = categoriesData
+        .map(
+            (p) =>
+                `<option value="${p.id}" ${p.id === selectedParentId ? "selected" : ""}>${p.name}</option>`
+        )
+        .join("");
 }
 
 async function editCategory(id, event) {
     event.stopPropagation();
-    const cats = await api("/api/categories");
-    const cat = cats.find((c) => c.id === id);
+    // Find category in cached data
+    let cat = null;
+    for (const p of categoriesData) {
+        const found = p.children.find((c) => c.id === id);
+        if (found) {
+            cat = found;
+            break;
+        }
+    }
     if (!cat) return;
 
     document.getElementById("category-modal-title").textContent = "Sửa danh mục";
     document.getElementById("cat-name").value = cat.name;
-    document.getElementById("cat-icon").value = cat.icon;
     document.getElementById("cat-id").value = id;
+    // Hide file section and parent dropdown when editing
+    document.getElementById("cat-file-section").style.display = "none";
+    document.getElementById("cat-parent-id").closest(".form-group").style.display = "none";
     showModal("category-modal");
 }
 
@@ -132,37 +202,77 @@ async function deleteCategory(id, event) {
 document.getElementById("btn-add-category").addEventListener("click", () => {
     document.getElementById("category-modal-title").textContent = "Thêm danh mục";
     document.getElementById("cat-name").value = "";
-    document.getElementById("cat-icon").value = "📄";
     document.getElementById("cat-id").value = "";
+    // Show parent dropdown and file section
+    document.getElementById("cat-parent-id").closest(".form-group").style.display = "";
+    document.getElementById("cat-file-section").style.display = "";
+    document.getElementById("cat-file").value = "";
+    document.getElementById("cat-pdf-title").value = "";
+    document.getElementById("cat-pdf-title-group").style.display = "none";
+    // Populate parent dropdown (select first)
+    _populateParentDropdown(categoriesData.length > 0 ? categoriesData[0].id : null);
     showModal("category-modal");
+});
+
+// Show/hide PDF title field when file is selected
+document.getElementById("cat-file").addEventListener("change", (e) => {
+    const titleGroup = document.getElementById("cat-pdf-title-group");
+    if (e.target.files.length > 0) {
+        titleGroup.style.display = "";
+    } else {
+        titleGroup.style.display = "none";
+    }
 });
 
 document.getElementById("btn-cancel-category").addEventListener("click", () => {
     hideModal("category-modal");
+    // Reset hidden elements
+    document.getElementById("cat-parent-id").closest(".form-group").style.display = "";
 });
 
 document.getElementById("category-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = document.getElementById("cat-name").value.trim();
-    const icon = document.getElementById("cat-icon").value.trim();
     const id = document.getElementById("cat-id").value;
 
     try {
         if (id) {
+            // Edit: JSON request (name only)
             await api(`/admin/categories/${id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name, icon }),
+                body: JSON.stringify({ name }),
             });
         } else {
-            await api("/admin/categories", {
+            // Create: FormData (name + parent_id + optional file)
+            const parentId = document.getElementById("cat-parent-id").value;
+            const formData = new FormData();
+            formData.append("name", name);
+            formData.append("parent_id", parentId);
+
+            const file = document.getElementById("cat-file").files[0];
+            if (file) {
+                formData.append("file", file);
+                const pdfTitle = document.getElementById("cat-pdf-title").value.trim();
+                if (pdfTitle) {
+                    formData.append("pdf_title", pdfTitle);
+                }
+            }
+
+            await fetch("/admin/categories", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name, icon }),
+                headers: { "X-CSRFToken": CSRF_TOKEN },
+                body: formData,
+            }).then((r) => {
+                if (!r.ok) return r.json().then((d) => Promise.reject(new Error(d.error)));
+                return r.json();
             });
         }
         hideModal("category-modal");
+        // Reset hidden elements
+        document.getElementById("cat-parent-id").closest(".form-group").style.display = "";
         loadCategories();
+        if (currentCategoryId) loadPdfs(currentCategoryId);
     } catch (e) {
         alert(e.message);
     }
@@ -170,16 +280,23 @@ document.getElementById("category-form").addEventListener("submit", async (e) =>
 
 // ─── PDFs ───
 async function loadPdfs(categoryId) {
-    const cats = await api("/api/categories");
-    const cat = cats.find((c) => c.id === categoryId);
-    if (!cat) return;
+    // Find category name from cached data
+    let catObj = null;
+    for (const p of categoriesData) {
+        const found = p.children.find((c) => c.id === categoryId);
+        if (found) {
+            catObj = found;
+            break;
+        }
+    }
 
     const pdfs = await api(`/api/categories/${categoryId}/pdfs`);
     const content = document.getElementById("admin-content");
 
+    const catName = catObj ? catObj.name : "Danh mục";
     let html = `
         <div class="admin-content-header">
-            <h2>${cat.icon} ${cat.name} <span style="font-weight:400;font-size:14px;color:#868E96">(${pdfs.length} file)</span></h2>
+            <h2>${catName} <span style="font-weight:400;font-size:14px;color:#868E96">(${pdfs.length} file)</span></h2>
             <button class="btn btn-primary btn-sm" onclick="openUploadModal(${categoryId})">+ Upload PDF</button>
         </div>
     `;

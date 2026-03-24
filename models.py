@@ -11,24 +11,47 @@ class Category(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.Text, nullable=False)
-    icon = db.Column(db.Text, default="📄")
+    parent_id = db.Column(
+        db.Integer,
+        db.ForeignKey("categories.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    is_default = db.Column(db.Boolean, default=False)
     sort_order = db.Column(db.Integer, default=0)
     created_at = db.Column(
         db.DateTime, default=lambda: datetime.now(timezone.utc)
     )
 
+    children = db.relationship(
+        "Category",
+        backref=db.backref("parent", remote_side="Category.id"),
+        lazy="dynamic",
+        passive_deletes=True,
+    )
     pdfs = db.relationship(
         "Pdf", backref="category", lazy="dynamic", passive_deletes=True
     )
 
+    @property
+    def is_parent(self):
+        return self.parent_id is None
+
     def to_dict(self):
-        return {
+        d = {
             "id": self.id,
             "name": self.name,
-            "icon": self.icon,
+            "parent_id": self.parent_id,
+            "is_default": self.is_default,
             "sort_order": self.sort_order,
-            "pdf_count": self.pdfs.count(),
         }
+        if self.is_parent:
+            d["children"] = [
+                child.to_dict()
+                for child in self.children.order_by(Category.sort_order.asc())
+            ]
+        else:
+            d["pdf_count"] = self.pdfs.count()
+        return d
 
 
 class Pdf(db.Model):
