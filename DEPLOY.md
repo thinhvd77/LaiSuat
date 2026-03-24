@@ -8,7 +8,7 @@
 4. [Cấu hình Gunicorn](#4-cấu-hình-gunicorn)
 5. [Cấu hình systemd](#5-cấu-hình-systemd)
 6. [Cấu hình Nginx](#6-cấu-hình-nginx)
-7. [SSL/HTTPS với Certbot](#7-sslhttps-với-certbot)
+7. [SSL/HTTPS với Cloudflare](#7-sslhttps-với-cloudflare)
 8. [Khởi chạy & Kiểm tra](#8-khởi-chạy--kiểm-tra)
 9. [Bảo trì & Cập nhật](#9-bảo-trì--cập-nhật)
 10. [Xử lý sự cố](#10-xử-lý-sự-cố)
@@ -18,23 +18,28 @@
 ## 1. Tổng quan kiến trúc
 
 ```
-┌──────────┐      ┌───────────────┐      ┌──────────────────┐
-│  Client   │─────▶│  Nginx (:80)  │─────▶│  Gunicorn (:8000)│
-│ (Browser) │◀─────│  Reverse Proxy│◀─────│  Flask App       │
-└──────────┘      └───────────────┘      └──────────────────┘
-                         │
-                         ├── Serve static files trực tiếp (CSS, JS, images)
-                         ├── Serve uploaded PDFs trực tiếp
-                         ├── SSL termination (HTTPS)
-                         ├── Gzip compression
-                         └── Rate limiting (bổ sung)
+┌──────────┐      ┌────────────┐      ┌───────────────┐      ┌──────────────────┐
+│  Client   │─────▶│ Cloudflare │─────▶│  Nginx (:443) │─────▶│  Gunicorn (sock) │
+│ (Browser) │◀─────│  CDN/Proxy │◀─────│  Reverse Proxy│◀─────│  Flask App       │
+└──────────┘      └────────────┘      └───────────────┘      └──────────────────┘
+                    │                        │
+                    ├── DDoS protection      ├── Serve static files trực tiếp
+                    ├── SSL (client-facing)   ├── SSL (Origin Certificate)
+                    └── DNS proxy            ├── Gzip compression
+                                             └── Reverse proxy → Gunicorn
 ```
 
+**Cloudflare** xử lý:
+- DNS proxy (orange cloud) — ẩn IP server thật
+- SSL client-facing (browser ↔ Cloudflare)
+- DDoS protection, WAF, caching
+
 **Nginx** xử lý:
-- Nhận request từ client (port 80/443)
-- Serve trực tiếp static files (`/static/`) và PDF uploads — **không qua Gunicorn**
+- Nhận request từ Cloudflare (port 443)
+- SSL Origin Certificate (Cloudflare ↔ Nginx) — chế độ **Full (strict)**
+- Serve trực tiếp static files (`/static/`) — **không qua Gunicorn**
 - Reverse proxy các request động đến Gunicorn
-- SSL termination, gzip, caching headers
+- Gzip compression, caching headers
 
 **Gunicorn** xử lý:
 - Chạy Flask app với nhiều worker processes
@@ -48,7 +53,7 @@
 - **Python**: 3.10+
 - **RAM**: tối thiểu 512MB (khuyến nghị 1GB)
 - **Disk**: tối thiểu 1GB (+ dung lượng cho PDF uploads)
-- **Domain**: trỏ A record về IP server (ví dụ: `laisuat.example.com`)
+- **Domain**: `laisuat.bactphcm.com` — DNS qua Cloudflare (Proxied / orange cloud)
 
 ---
 
@@ -243,12 +248,7 @@ sudo tee /etc/nginx/sites-available/laisuat << 'EOF'
 server {
     listen 80;
     listen [::]:80;
-    server_name laisuat.example.com;
-
-    # Certbot challenge (cần cho bước lấy SSL)
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
+    server_name laisuat.bactphcm.com;
 
     # Redirect tất cả sang HTTPS
     location / {
@@ -260,20 +260,24 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name laisuat.example.com;
+    server_name laisuat.bactphcm.com;
 
-    # SSL certificates (sẽ cấu hình ở bước 7)
-    # ssl_certificate /etc/letsencrypt/live/laisuat.example.com/fullchain.pem;
-    # ssl_certificate_key /etc/letsencrypt/live/laisuat.example.com/privkey.pem;
-    # include /etc/letsencrypt/options-ssl-nginx.conf;
-    # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+    # SSL — Cloudflare Origin Certificate
+    ssl_certificate     /etc/ssl/cloudflare/btp.crt;
+    ssl_certificate_key /etc/ssl/cloudflare/btp.key;
+
+    # Chỉ cho phép traffic từ Cloudflare (khuyến nghị)
+    # Xem danh sách IP: https://www.cloudflare.com/ips/
+    # set_real_ip_from 173.245.48.0/20;
+    # ... (thêm các range khác)
+    # real_ip_header CF-Connecting-IP;
 
     # ─── Security headers ───
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; worker-src 'self' blob:;" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://cloudflareinsights.com; worker-src 'self' blob:;" always;
 
     # ─── Giới hạn upload ───
     client_max_body_size 16M;
@@ -292,6 +296,13 @@ server {
         application/json
         application/xml
         image/svg+xml;
+
+    # ─── MIME type cho .mjs (ES modules) ───
+    # Nginx mặc định không nhận dạng .mjs → serve thành application/octet-stream
+    # Browser từ chối load module script nếu MIME type sai
+    types {
+        application/javascript mjs;
+    }
 
     # ─── Static files — serve trực tiếp, không qua Gunicorn ───
     location /static/ {
@@ -371,74 +382,72 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-### 6.3. Tạm thời test HTTP (trước khi có SSL)
+### 6.3. Phân quyền cho Nginx đọc socket
 
-Nếu chưa có SSL, comment block `server :443` và sửa block `server :80`:
-
-```nginx
-server {
-    listen 80;
-    server_name laisuat.example.com;
-
-    client_max_body_size 16M;
-
-    location /static/ {
-        alias /home/laisuat/LaiSuat/static/;
-        expires 30d;
-    }
-
-    location / {
-        proxy_pass http://unix:/home/laisuat/LaiSuat/laisuat.sock;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
+```bash
+# Thêm www-data vào group laisuat để đọc được Unix socket
+sudo usermod -aG laisuat www-data
+sudo systemctl restart nginx
 ```
 
 ---
 
-## 7. SSL/HTTPS với Certbot
+## 7. SSL/HTTPS với Cloudflare
 
-### 7.1. Cài Certbot
+Dự án sử dụng **Cloudflare Origin Certificate** — certificate do Cloudflare cấp, chỉ hợp lệ khi traffic đi qua Cloudflare proxy (orange cloud).
 
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-```
+### 7.1. Cấu hình Cloudflare Dashboard
 
-### 7.2. Lấy certificate
+1. **DNS** → A record `laisuat` → IP server, **Proxied** (orange cloud ☁️)
+2. **SSL/TLS** → Encryption mode: **Full (strict)**
+3. **SSL/TLS** → Origin Server → tạo Origin Certificate (nếu chưa có)
 
-```bash
-sudo certbot --nginx -d laisuat.example.com
-```
-
-Certbot sẽ tự động:
-- Xác thực domain
-- Tạo certificate
-- Cập nhật Nginx config (uncomment SSL lines)
-- Thiết lập auto-renew
-
-### 7.3. Kiểm tra auto-renew
+### 7.2. Cài đặt certificate trên server
 
 ```bash
-sudo certbot renew --dry-run
+# Tạo thư mục chứa cert
+sudo mkdir -p /etc/ssl/cloudflare
+
+# Copy cert và key (từ Cloudflare Dashboard → Origin Server → Create Certificate)
+sudo tee /etc/ssl/cloudflare/btp.crt << 'EOF'
+-----BEGIN CERTIFICATE-----
+<paste certificate content>
+-----END CERTIFICATE-----
+EOF
+
+sudo tee /etc/ssl/cloudflare/btp.key << 'EOF'
+-----BEGIN PRIVATE KEY-----
+<paste private key content>
+-----END PRIVATE KEY-----
+EOF
+
+# Phân quyền — chỉ root đọc được private key
+sudo chmod 600 /etc/ssl/cloudflare/btp.key
+sudo chmod 644 /etc/ssl/cloudflare/btp.crt
+sudo chown root:root /etc/ssl/cloudflare/*
 ```
 
-### 7.4. Uncomment SSL trong Nginx config
-
-Sau khi Certbot thành công, đảm bảo các dòng SSL đã được uncomment:
-
-```nginx
-ssl_certificate /etc/letsencrypt/live/laisuat.example.com/fullchain.pem;
-ssl_certificate_key /etc/letsencrypt/live/laisuat.example.com/privkey.pem;
-include /etc/letsencrypt/options-ssl-nginx.conf;
-ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-```
+### 7.3. Kiểm tra SSL
 
 ```bash
-sudo nginx -t && sudo systemctl reload nginx
+# Kiểm tra Nginx config hợp lệ
+sudo nginx -t
+
+# Reload Nginx
+sudo systemctl reload nginx
+
+# Test từ local (bypass Cloudflare — sẽ báo lỗi cert vì Origin Cert chỉ hợp lệ qua CF)
+curl -k https://laisuat.bactphcm.com
+
+# Test qua Cloudflare (từ máy ngoài) — phải trả về trang chủ
+curl https://laisuat.bactphcm.com
 ```
+
+### 7.4. Lưu ý về Origin Certificate
+
+- **Thời hạn**: Origin Certificate có thể cấp tối đa 15 năm — **không cần auto-renew** như Let's Encrypt
+- **Chỉ hợp lệ qua Cloudflare**: Nếu tắt proxy (grey cloud), browser sẽ báo lỗi cert
+- **Không cần Certbot**: Cloudflare xử lý SSL client-facing, Origin Cert chỉ mã hóa đoạn Cloudflare ↔ server
 
 ---
 
@@ -470,25 +479,28 @@ ls -la /home/laisuat/LaiSuat/laisuat.sock
 ### 8.2. Kiểm tra từ trình duyệt
 
 ```
-https://laisuat.example.com        → Trang chủ
-https://laisuat.example.com/admin  → Trang admin (redirect đến login)
+https://laisuat.bactphcm.com        → Trang chủ
+https://laisuat.bactphcm.com/admin  → Trang admin (redirect đến login)
 ```
 
 ### 8.3. Kiểm tra từ command line
 
 ```bash
 # Test HTTP → HTTPS redirect
-curl -I http://laisuat.example.com
+curl -I http://laisuat.bactphcm.com
 
 # Test trang chủ
-curl -s https://laisuat.example.com | head -20
+curl -s https://laisuat.bactphcm.com | head -20
 
 # Test API
-curl -s https://laisuat.example.com/api/categories | python3 -m json.tool
+curl -s https://laisuat.bactphcm.com/api/categories | python3 -m json.tool
 
 # Test static file caching
-curl -I https://laisuat.example.com/static/css/style.css
+curl -I https://laisuat.bactphcm.com/static/css/style.css
 # Kỳ vọng: Cache-Control: public, immutable; Expires: ...
+
+# Test SSL certificate (phải thấy Cloudflare cert)
+curl -vI https://laisuat.bactphcm.com 2>&1 | grep -i "issuer\|subject"
 ```
 
 ---
