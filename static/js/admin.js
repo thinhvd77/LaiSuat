@@ -113,13 +113,14 @@ async function loadCategories() {
             const childrenHtml = (p.children || [])
                 .map((c) => {
                     if (c.is_leaf) {
-                        // L1 leaf — clickable item with edit/delete
+                        // L1 leaf — clickable item with edit/delete + optional add
                         return `
                         <div class="sidebar-item ${c.id === currentCategoryId ? "active" : ""}"
                              data-id="${c.id}">
                             <span class="sidebar-item-text">${c.name}</span>
                             <span class="sidebar-item-count">${c.pdf_count}</span>
                             <div class="sidebar-item-actions">
+                                ${c.can_have_children ? `<button class="btn-icon btn-icon-add" title="Thêm danh mục con" onclick="openAddCategoryForParent(${c.id}, event)">+</button>` : ""}
                                 <button class="btn-icon" title="Sửa" onclick="editCategory(${c.id}, event)">✏️</button>
                                 <button class="btn-icon btn-icon-danger" title="Xóa" onclick="deleteCategory(${c.id}, event)">🗑️</button>
                             </div>
