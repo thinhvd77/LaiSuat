@@ -38,6 +38,29 @@ function closeAdminSidebar() {
 if (adminSidebarToggle) adminSidebarToggle.addEventListener("click", openAdminSidebar);
 if (adminOverlay) adminOverlay.addEventListener("click", closeAdminSidebar);
 
+// ─── Recursive Category Search ───
+function findCategoryById(parents, id) {
+    for (const p of parents) {
+        if (p.id === id) return p;
+        if (p.children) {
+            for (const c of p.children) {
+                if (c.id === id) return c;
+                if (c.children) {
+                    const found = c.children.find((gc) => gc.id === id);
+                    if (found) return found;
+                }
+            }
+        }
+    }
+    return null;
+}
+
+function countPdfs(cat) {
+    if (cat.is_leaf) return cat.pdf_count || 0;
+    if (!cat.children) return 0;
+    return cat.children.reduce((sum, c) => sum + countPdfs(c), 0);
+}
+
 // ─── Categories (Accordion) ───
 let categoriesData = []; // cache for modal dropdown
 
@@ -54,15 +77,31 @@ async function loadCategories() {
         return;
     }
 
-    // Auto-expand parent of selected child, or first parent
+    // Auto-expand: find which root and L1 contain the selected category
     if (expandedParents.size === 0) {
         let found = false;
         for (const p of parents) {
-            if (currentCategoryId && p.children.some((c) => c.id === currentCategoryId)) {
-                expandedParents.add(p.id);
-                found = true;
-                break;
+            if (p.children) {
+                for (const c of p.children) {
+                    if (c.id === currentCategoryId) {
+                        expandedParents.add(p.id);
+                        found = true;
+                        break;
+                    }
+                    if (c.children) {
+                        for (const gc of c.children) {
+                            if (gc.id === currentCategoryId) {
+                                expandedParents.add(p.id);
+                                expandedParents.add(c.id);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (found) break;
+                }
             }
+            if (found) break;
         }
         if (!found && parents.length > 0) expandedParents.add(parents[0].id);
     }
@@ -70,19 +109,58 @@ async function loadCategories() {
     list.innerHTML = parents
         .map((p) => {
             const isExpanded = expandedParents.has(p.id);
-            const childrenHtml = p.children
-                .map(
-                    (c) => `
-                <div class="sidebar-item ${c.id === currentCategoryId ? "active" : ""}"
-                     data-id="${c.id}">
-                    <span class="sidebar-item-text">${c.name}</span>
-                    <span class="sidebar-item-count">${c.pdf_count}</span>
-                    <div class="sidebar-item-actions">
-                        <button class="btn-icon" title="Sửa" onclick="editCategory(${c.id}, event)">✏️</button>
-                        <button class="btn-icon btn-icon-danger" title="Xóa" onclick="deleteCategory(${c.id}, event)">🗑️</button>
-                    </div>
-                </div>`
-                )
+
+            const childrenHtml = (p.children || [])
+                .map((c) => {
+                    if (c.is_leaf) {
+                        // L1 leaf — clickable item with edit/delete
+                        return `
+                        <div class="sidebar-item ${c.id === currentCategoryId ? "active" : ""}"
+                             data-id="${c.id}">
+                            <span class="sidebar-item-text">${c.name}</span>
+                            <span class="sidebar-item-count">${c.pdf_count}</span>
+                            <div class="sidebar-item-actions">
+                                <button class="btn-icon" title="Sửa" onclick="editCategory(${c.id}, event)">✏️</button>
+                                <button class="btn-icon btn-icon-danger" title="Xóa" onclick="deleteCategory(${c.id}, event)">🗑️</button>
+                            </div>
+                        </div>`;
+                    } else {
+                        // L1 with children — sub-accordion
+                        const isSubExpanded = expandedParents.has(c.id);
+                        const grandchildrenHtml = (c.children || [])
+                            .map(
+                                (gc) => `
+                            <div class="sidebar-item ${gc.id === currentCategoryId ? "active" : ""}"
+                                 data-id="${gc.id}">
+                                <span class="sidebar-item-text">${gc.name}</span>
+                                <span class="sidebar-item-count">${gc.pdf_count}</span>
+                                <div class="sidebar-item-actions">
+                                    <button class="btn-icon" title="Sửa" onclick="editCategory(${gc.id}, event)">✏️</button>
+                                    <button class="btn-icon btn-icon-danger" title="Xóa" onclick="deleteCategory(${gc.id}, event)">🗑️</button>
+                                </div>
+                            </div>`
+                            )
+                            .join("");
+
+                        return `
+                        <div class="sidebar-subgroup ${isSubExpanded ? "expanded" : ""}">
+                            <div class="sidebar-subgroup-header" data-subgroup-id="${c.id}">
+                                <span class="sidebar-subgroup-name">${c.name}</span>
+                                <span class="sidebar-subgroup-meta">
+                                    <button class="btn-icon" title="Sửa" onclick="editCategory(${c.id}, event)">✏️</button>
+                                    <button class="btn-icon btn-icon-danger" title="Xóa" onclick="deleteCategory(${c.id}, event)">🗑️</button>
+                                    ${c.can_have_children ? `<button class="btn-icon btn-icon-add" title="Thêm danh mục con" onclick="openAddCategoryForParent(${c.id}, event)">+</button>` : ""}
+                                    <svg class="sidebar-subgroup-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </span>
+                            </div>
+                            <div class="sidebar-subgroup-children">
+                                ${grandchildrenHtml || '<p class="sidebar-empty">Chưa có danh mục con</p>'}
+                            </div>
+                        </div>`;
+                    }
+                })
                 .join("");
 
             return `
@@ -103,10 +181,9 @@ async function loadCategories() {
         })
         .join("");
 
-    // Accordion toggle (DOM-only, no refetch)
+    // Root accordion toggle (DOM-only, skip if clicking buttons)
     list.querySelectorAll(".sidebar-group-header").forEach((el) => {
         el.addEventListener("click", (e) => {
-            // Don't toggle if clicking the add button
             if (e.target.closest(".btn-icon-add")) return;
             const parentId = parseInt(el.dataset.parentId);
             const group = el.closest(".sidebar-group");
@@ -120,7 +197,23 @@ async function loadCategories() {
         });
     });
 
-    // Child click → load PDFs
+    // Sub-accordion toggle (DOM-only, skip if clicking buttons)
+    list.querySelectorAll(".sidebar-subgroup-header").forEach((el) => {
+        el.addEventListener("click", (e) => {
+            if (e.target.closest(".btn-icon") || e.target.closest(".btn-icon-add")) return;
+            const subId = parseInt(el.dataset.subgroupId);
+            const subgroup = el.closest(".sidebar-subgroup");
+            if (expandedParents.has(subId)) {
+                expandedParents.delete(subId);
+                subgroup.classList.remove("expanded");
+            } else {
+                expandedParents.add(subId);
+                subgroup.classList.add("expanded");
+            }
+        });
+    });
+
+    // Leaf item click → load PDFs
     list.querySelectorAll(".sidebar-item").forEach((el) => {
         el.addEventListener("click", () => {
             currentCategoryId = parseInt(el.dataset.id);
@@ -150,25 +243,27 @@ function openAddCategoryForParent(parentId, event) {
 
 function _populateParentDropdown(selectedParentId) {
     const select = document.getElementById("cat-parent-id");
-    select.innerHTML = categoriesData
-        .map(
-            (p) =>
-                `<option value="${p.id}" ${p.id === selectedParentId ? "selected" : ""}>${p.name}</option>`
-        )
-        .join("");
+    let html = "";
+    for (const p of categoriesData) {
+        html += `<optgroup label="${p.name}">`;
+        // Root itself as an option
+        html += `<option value="${p.id}" ${p.id === selectedParentId ? "selected" : ""}>${p.name}</option>`;
+        // L1 children that can have children
+        if (p.children) {
+            for (const c of p.children) {
+                if (c.can_have_children) {
+                    html += `<option value="${c.id}" ${c.id === selectedParentId ? "selected" : ""}>— ${c.name}</option>`;
+                }
+            }
+        }
+        html += `</optgroup>`;
+    }
+    select.innerHTML = html;
 }
 
 async function editCategory(id, event) {
     event.stopPropagation();
-    // Find category in cached data
-    let cat = null;
-    for (const p of categoriesData) {
-        const found = p.children.find((c) => c.id === id);
-        if (found) {
-            cat = found;
-            break;
-        }
-    }
+    const cat = findCategoryById(categoriesData, id);
     if (!cat) return;
 
     document.getElementById("category-modal-title").textContent = "Sửa danh mục";
@@ -280,15 +375,7 @@ document.getElementById("category-form").addEventListener("submit", async (e) =>
 
 // ─── PDFs ───
 async function loadPdfs(categoryId) {
-    // Find category name from cached data
-    let catObj = null;
-    for (const p of categoriesData) {
-        const found = p.children.find((c) => c.id === categoryId);
-        if (found) {
-            catObj = found;
-            break;
-        }
-    }
+    const catObj = findCategoryById(categoriesData, categoryId);
 
     const pdfs = await api(`/api/categories/${categoryId}/pdfs`);
     const content = document.getElementById("admin-content");
