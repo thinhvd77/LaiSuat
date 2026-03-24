@@ -496,6 +496,63 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing:
     font-style: italic;
 }
 
+/* Sub-accordion for L1 categories with children */
+.sidebar-subgroup {
+    margin-bottom: 2px;
+}
+.sidebar-subgroup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    transition: all var(--transition);
+    user-select: none;
+}
+.sidebar-subgroup-header:hover {
+    background: var(--gray-100);
+}
+.sidebar-subgroup-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray-600);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sidebar-subgroup-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.sidebar-subgroup-arrow {
+    color: var(--gray-400);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    flex-shrink: 0;
+}
+.sidebar-subgroup.expanded .sidebar-subgroup-arrow {
+    transform: rotate(0deg);
+}
+.sidebar-subgroup:not(.expanded) .sidebar-subgroup-arrow {
+    transform: rotate(-90deg);
+}
+.sidebar-subgroup-children {
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition:
+        max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.25s ease;
+    padding-left: 12px;
+}
+.sidebar-subgroup.expanded .sidebar-subgroup-children {
+    max-height: 500px;
+    opacity: 1;
+}
+
 /* "+" add button on parent header */
 .btn-icon-add {
     font-size: 16px;
