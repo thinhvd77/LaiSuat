@@ -24,6 +24,45 @@ function closeSidebar() {
 if (sidebarToggle) sidebarToggle.addEventListener("click", openSidebar);
 if (overlay) overlay.addEventListener("click", closeSidebar);
 
+// ─── Recursive Category Search ───
+function findCategoryById(parents, id) {
+    for (const p of parents) {
+        if (p.id === id) return p;
+        if (p.children) {
+            for (const c of p.children) {
+                if (c.id === id) return c;
+                if (c.children) {
+                    const found = c.children.find((gc) => gc.id === id);
+                    if (found) return found;
+                }
+            }
+        }
+    }
+    return null;
+}
+
+function countPdfs(cat) {
+    if (cat.is_leaf) return cat.pdf_count || 0;
+    if (!cat.children) return 0;
+    return cat.children.reduce((sum, c) => sum + countPdfs(c), 0);
+}
+
+function findFirstLeaf(parents) {
+    for (const p of parents) {
+        if (p.children) {
+            for (const c of p.children) {
+                if (c.is_leaf) return c;
+                if (c.children) {
+                    for (const gc of c.children) {
+                        if (gc.is_leaf) return gc;
+                    }
+                }
+            }
+        }
+    }
+    return null;
+}
+
 // ─── Categories (Accordion) ───
 async function loadCategories() {
     const resp = await fetch("/api/categories");
@@ -42,35 +81,90 @@ async function loadCategories() {
         return;
     }
 
-    // Auto-expand parent that contains the selected child, or first parent with children
-    let autoExpanded = false;
+    // Auto-expand: find which root and L1 contain the selected category
     if (expandedParents.size === 0) {
+        let found = false;
         for (const p of parents) {
-            if (currentCategoryId && p.children.some((c) => c.id === currentCategoryId)) {
-                expandedParents.add(p.id);
-                autoExpanded = true;
-                break;
+            if (p.children) {
+                for (const c of p.children) {
+                    if (c.id === currentCategoryId) {
+                        expandedParents.add(p.id);
+                        found = true;
+                        break;
+                    }
+                    if (c.children) {
+                        for (const gc of c.children) {
+                            if (gc.id === currentCategoryId) {
+                                expandedParents.add(p.id);
+                                expandedParents.add(c.id);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (found) break;
+                }
             }
+            if (found) break;
         }
-        if (!autoExpanded) {
-            const firstWithChildren = parents.find((p) => p.children.length > 0);
-            if (firstWithChildren) expandedParents.add(firstWithChildren.id);
+        if (!found) {
+            // Expand first root that has any leaf descendants
+            for (const p of parents) {
+                if (p.children && p.children.length > 0) {
+                    expandedParents.add(p.id);
+                    break;
+                }
+            }
         }
     }
 
     list.innerHTML = parents
         .map((p) => {
             const isExpanded = expandedParents.has(p.id);
-            const totalPdfs = p.children.reduce((sum, c) => sum + c.pdf_count, 0);
-            const childrenHtml = p.children
-                .map(
-                    (c) => `
-                <div class="sidebar-item ${c.id === currentCategoryId ? "active" : ""}"
-                     data-id="${c.id}">
-                    <span class="sidebar-item-text">${c.name}</span>
-                    <span class="sidebar-item-count">${c.pdf_count}</span>
-                </div>`
-                )
+            const totalPdfs = countPdfs(p);
+
+            const childrenHtml = (p.children || [])
+                .map((c) => {
+                    if (c.is_leaf) {
+                        // L1 leaf — clickable item
+                        return `
+                        <div class="sidebar-item ${c.id === currentCategoryId ? "active" : ""}"
+                             data-id="${c.id}">
+                            <span class="sidebar-item-text">${c.name}</span>
+                            <span class="sidebar-item-count">${c.pdf_count}</span>
+                        </div>`;
+                    } else {
+                        // L1 with children — sub-accordion
+                        const isSubExpanded = expandedParents.has(c.id);
+                        const subTotal = countPdfs(c);
+                        const grandchildrenHtml = (c.children || [])
+                            .map(
+                                (gc) => `
+                            <div class="sidebar-item ${gc.id === currentCategoryId ? "active" : ""}"
+                                 data-id="${gc.id}">
+                                <span class="sidebar-item-text">${gc.name}</span>
+                                <span class="sidebar-item-count">${gc.pdf_count}</span>
+                            </div>`
+                            )
+                            .join("");
+
+                        return `
+                        <div class="sidebar-subgroup ${isSubExpanded ? "expanded" : ""}">
+                            <div class="sidebar-subgroup-header" data-subgroup-id="${c.id}">
+                                <span class="sidebar-subgroup-name">${c.name}</span>
+                                <span class="sidebar-subgroup-meta">
+                                    <span class="sidebar-group-total">${subTotal}</span>
+                                    <svg class="sidebar-subgroup-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </span>
+                            </div>
+                            <div class="sidebar-subgroup-children">
+                                ${grandchildrenHtml || '<p class="sidebar-empty">Chưa có danh mục con</p>'}
+                            </div>
+                        </div>`;
+                    }
+                })
                 .join("");
 
             return `
@@ -91,7 +185,7 @@ async function loadCategories() {
         })
         .join("");
 
-    // Accordion toggle (DOM-only, no refetch)
+    // Root accordion toggle (DOM-only)
     list.querySelectorAll(".sidebar-group-header").forEach((el) => {
         el.addEventListener("click", () => {
             const parentId = parseInt(el.dataset.parentId);
@@ -106,7 +200,22 @@ async function loadCategories() {
         });
     });
 
-    // Child click → load PDFs
+    // Sub-accordion toggle (DOM-only)
+    list.querySelectorAll(".sidebar-subgroup-header").forEach((el) => {
+        el.addEventListener("click", () => {
+            const subId = parseInt(el.dataset.subgroupId);
+            const subgroup = el.closest(".sidebar-subgroup");
+            if (expandedParents.has(subId)) {
+                expandedParents.delete(subId);
+                subgroup.classList.remove("expanded");
+            } else {
+                expandedParents.add(subId);
+                subgroup.classList.add("expanded");
+            }
+        });
+    });
+
+    // Leaf item click → load PDFs
     list.querySelectorAll(".sidebar-item").forEach((el) => {
         el.addEventListener("click", () => {
             currentCategoryId = parseInt(el.dataset.id);
@@ -116,15 +225,13 @@ async function loadCategories() {
         });
     });
 
-    // Auto-select first child if none selected
+    // Auto-select first leaf if none selected
     if (!currentCategoryId) {
-        for (const p of parents) {
-            if (p.children.length > 0) {
-                currentCategoryId = p.children[0].id;
-                loadCategories();
-                loadPdfs(currentCategoryId);
-                break;
-            }
+        const firstLeaf = findFirstLeaf(parents);
+        if (firstLeaf) {
+            currentCategoryId = firstLeaf.id;
+            loadCategories();
+            loadPdfs(currentCategoryId);
         }
     }
 }
@@ -136,17 +243,10 @@ async function loadPdfs(categoryId) {
     const select = document.getElementById("pdf-select");
     const catName = document.getElementById("category-name");
 
-    // Find category name from the hierarchical data
+    // Use recursive search via re-fetch
     const catsResp = await fetch("/api/categories");
     const parents = await catsResp.json();
-    let catObj = null;
-    for (const p of parents) {
-        const found = p.children.find((c) => c.id === categoryId);
-        if (found) {
-            catObj = found;
-            break;
-        }
-    }
+    const catObj = findCategoryById(parents, categoryId);
     if (catObj) catName.textContent = catObj.name;
 
     const resp = await fetch(`/api/categories/${categoryId}/pdfs`);
