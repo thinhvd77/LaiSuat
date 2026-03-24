@@ -41,7 +41,7 @@ gunicorn app:create_app()
 - `routes_public.py` — homepage, REST API (`/api/categories`, `/api/categories/<id>/pdfs`), PDF serving (`/pdf/<id>`)
 - `routes_admin.py` — login/logout, password change, category CRUD, PDF upload/delete. All admin routes require `@login_required`.
 
-**Models** (`models.py`): `Category`, `Pdf`, `Admin`. Category→Pdf is one-to-many with `ondelete="RESTRICT"`. Admin passwords use bcrypt.
+**Models** (`models.py`): `Category`, `Pdf`, `Admin`. Category→Pdf is one-to-many with `ondelete="RESTRICT"`. Admin passwords use bcrypt. Category uses self-referencing FK (`parent_id`) for 3-level hierarchy: Root (depth 0) → L1 (depth 1) → L2 (depth 2). Computed properties: `depth`, `is_leaf` (no children), `can_have_children` (depth < 2). PDFs only on leaf categories. `to_dict()` recursively serializes children.
 
 **Frontend**: Vanilla JS (ES modules). `app.js` handles public PDF viewer with PDF.js 4.x (`.mjs` imports). `admin.js` handles admin CRUD with fetch API. Both send CSRF token via `X-CSRFToken` header from `<meta name="csrf-token">`.
 
@@ -62,7 +62,7 @@ pytest with fixtures in `tests/conftest.py`:
 - `client` — unauthenticated test client
 - `auth_client` — pre-authenticated (creates admin user, logs in)
 
-42 tests across 3 files. Category creation tests use `multipart/form-data` (not JSON).
+62 tests across 3 files. Category creation tests use `multipart/form-data` (not JSON).
 
 ## CSS Design System
 
