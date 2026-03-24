@@ -386,3 +386,124 @@ class TestRateLimiting:
             data={"username": "admin", "password": "wrong"},
         )
         assert resp.status_code == 429
+
+
+class TestThreeLevelCategories:
+    def _create_l1(self, app, auth_client, name="L1 Cat"):
+        parent_id = _get_parent_id(app)
+        resp = auth_client.post(
+            "/admin/categories",
+            data={"name": name, "parent_id": str(parent_id)},
+            content_type="multipart/form-data",
+        )
+        return resp.get_json()["id"]
+
+    def test_create_l2_under_l1(self, app, auth_client):
+        """Can create L2 category under L1."""
+        l1_id = self._create_l1(app, auth_client)
+        resp = auth_client.post(
+            "/admin/categories",
+            data={"name": "L2 Child", "parent_id": str(l1_id)},
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data["name"] == "L2 Child"
+        assert data["parent_id"] == l1_id
+        assert data["depth"] == 2
+
+    def test_reject_create_child_of_l2(self, app, auth_client):
+        """Cannot create child under L2 (max depth reached)."""
+        l1_id = self._create_l1(app, auth_client)
+        resp = auth_client.post(
+            "/admin/categories",
+            data={"name": "L2", "parent_id": str(l1_id)},
+            content_type="multipart/form-data",
+        )
+        l2_id = resp.get_json()["id"]
+
+        resp = auth_client.post(
+            "/admin/categories",
+            data={"name": "L3 Rejected", "parent_id": str(l2_id)},
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 400
+
+    def test_upload_pdf_to_l1_leaf(self, app, auth_client):
+        """Can upload PDF to L1 leaf (no children)."""
+        l1_id = self._create_l1(app, auth_client)
+        data = {
+            "title": "PDF on L1",
+            "category_id": str(l1_id),
+            "file": (io.BytesIO(b"%PDF-1.4 test"), "l1.pdf"),
+        }
+        resp = auth_client.post(
+            "/admin/pdfs", data=data, content_type="multipart/form-data"
+        )
+        assert resp.status_code == 201
+
+    def test_reject_upload_to_l1_with_children(self, app, auth_client):
+        """Cannot upload PDF to L1 that has children (not a leaf)."""
+        l1_id = self._create_l1(app, auth_client)
+        # Add a child to make L1 non-leaf
+        auth_client.post(
+            "/admin/categories",
+            data={"name": "L2 Child", "parent_id": str(l1_id)},
+            content_type="multipart/form-data",
+        )
+
+        data = {
+            "title": "Should fail",
+            "category_id": str(l1_id),
+            "file": (io.BytesIO(b"%PDF-1.4 test"), "fail.pdf"),
+        }
+        resp = auth_client.post(
+            "/admin/pdfs", data=data, content_type="multipart/form-data"
+        )
+        assert resp.status_code == 400
+
+    def test_reject_add_child_to_category_with_pdfs(self, app, auth_client):
+        """Cannot add child to L1 that already has PDFs."""
+        l1_id = self._create_l1(app, auth_client)
+        # Upload a PDF first
+        data = {
+            "title": "Existing PDF",
+            "category_id": str(l1_id),
+            "file": (io.BytesIO(b"%PDF-1.4 test"), "existing.pdf"),
+        }
+        auth_client.post(
+            "/admin/pdfs", data=data, content_type="multipart/form-data"
+        )
+
+        # Try to add a child
+        resp = auth_client.post(
+            "/admin/categories",
+            data={"name": "Should fail", "parent_id": str(l1_id)},
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 400
+
+    def test_delete_category_with_children_fails(self, app, auth_client):
+        """Cannot delete L1 that has children."""
+        l1_id = self._create_l1(app, auth_client)
+        auth_client.post(
+            "/admin/categories",
+            data={"name": "L2 Child", "parent_id": str(l1_id)},
+            content_type="multipart/form-data",
+        )
+
+        resp = auth_client.delete(f"/admin/categories/{l1_id}")
+        assert resp.status_code == 400
+
+    def test_upload_to_root_rejected(self, app, auth_client):
+        """Cannot upload PDF to root category (depth 0)."""
+        parent_id = _get_parent_id(app)
+        data = {
+            "title": "Root upload",
+            "category_id": str(parent_id),
+            "file": (io.BytesIO(b"%PDF-1.4 test"), "root.pdf"),
+        }
+        resp = auth_client.post(
+            "/admin/pdfs", data=data, content_type="multipart/form-data"
+        )
+        assert resp.status_code == 400

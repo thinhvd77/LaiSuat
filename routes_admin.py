@@ -104,8 +104,11 @@ def create_category():
         return {"error": "Danh mục cha là bắt buộc"}, 400
 
     parent = db.session.get(Category, int(parent_id))
-    if not parent or not parent.is_parent:
-        return {"error": "Danh mục cha không hợp lệ"}, 400
+    if not parent or not parent.can_have_children:
+        return {"error": "Danh mục này không thể có danh mục con"}, 400
+
+    if parent.pdfs.count() > 0:
+        return {"error": "Danh mục đang có tài liệu, không thể thêm danh mục con"}, 400
 
     max_order = (
         db.session.query(db.func.max(Category.sort_order))
@@ -190,6 +193,9 @@ def delete_category(cat_id):
     if cat.is_default:
         return {"error": "Không thể xóa danh mục mặc định"}, 400
 
+    if cat.children.count() > 0:
+        return {"error": "Không thể xóa danh mục còn danh mục con"}, 400
+
     if cat.pdfs.count() > 0:
         return {"error": "Không thể xóa danh mục còn tài liệu"}, 400
 
@@ -234,8 +240,8 @@ def upload_pdf():
     if not cat:
         return {"error": "Không tìm thấy danh mục"}, 404
 
-    if cat.is_parent:
-        return {"error": "Chỉ upload vào danh mục con"}, 400
+    if cat.depth == 0 or not cat.is_leaf:
+        return {"error": "Chỉ upload vào danh mục lá (không có danh mục con)"}, 400
 
     valid, error_msg = _validate_pdf(file)
     if not valid:
