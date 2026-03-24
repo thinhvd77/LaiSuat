@@ -13,13 +13,14 @@ class TestPublicHomepage:
 
 class TestCategoriesAPI:
     def test_list_categories_returns_parents(self, app, client):
-        """API returns 3 default parent categories with children arrays."""
+        """API returns 3 default parent categories with new fields."""
         resp = client.get("/api/categories")
         assert resp.status_code == 200
         data = resp.get_json()
         assert len(data) == 3
         assert data[0]["name"] == "Lãi suất"
-        assert "children" in data[0]
+        assert "depth" in data[0]
+        assert "is_leaf" in data[0]
 
     def test_list_categories_with_children(self, app, client):
         with app.app_context():
@@ -33,6 +34,8 @@ class TestCategoriesAPI:
         data = resp.get_json()
         lai_suat = data[0]
         assert lai_suat["name"] == "Lãi suất"
+        assert "depth" in lai_suat
+        assert "is_leaf" in lai_suat
         assert len(lai_suat["children"]) == 2
         assert lai_suat["children"][0]["name"] == "Tiết kiệm"
         assert lai_suat["children"][1]["name"] == "Cho vay"
@@ -43,6 +46,46 @@ class TestCategoriesAPI:
         assert data[0]["name"] == "Lãi suất"
         assert data[1]["name"] == "Các chương trình tín dụng ưu đãi"
         assert data[2]["name"] == "Phí dịch vụ"
+
+    def test_list_categories_3_levels(self, app, client):
+        """API returns 3-level nested structure."""
+        with app.app_context():
+            root = Category.query.filter_by(name="Lãi suất", parent_id=None).first()
+            l1 = Category(name="Tiết kiệm", parent_id=root.id, sort_order=1)
+            db.session.add(l1)
+            db.session.commit()
+            l2 = Category(name="Online", parent_id=l1.id, sort_order=1)
+            db.session.add(l2)
+            db.session.commit()
+
+        resp = client.get("/api/categories")
+        data = resp.get_json()
+        lai_suat = data[0]
+        assert lai_suat["name"] == "Lãi suất"
+        assert len(lai_suat["children"]) == 1
+
+        tiet_kiem = lai_suat["children"][0]
+        assert tiet_kiem["name"] == "Tiết kiệm"
+        assert "children" in tiet_kiem
+        assert len(tiet_kiem["children"]) == 1
+        assert tiet_kiem["children"][0]["name"] == "Online"
+        assert "pdf_count" in tiet_kiem["children"][0]
+
+    def test_l1_leaf_in_api(self, app, client):
+        """L1 leaf (no children) appears with pdf_count, not children."""
+        with app.app_context():
+            root = Category.query.filter_by(name="Lãi suất", parent_id=None).first()
+            l1 = Category(name="Leaf L1", parent_id=root.id, sort_order=1)
+            db.session.add(l1)
+            db.session.commit()
+
+        resp = client.get("/api/categories")
+        data = resp.get_json()
+        l1_data = data[0]["children"][0]
+        assert l1_data["name"] == "Leaf L1"
+        assert l1_data["is_leaf"] is True
+        assert "pdf_count" in l1_data
+        assert "children" not in l1_data
 
 
 class TestPdfsAPI:
