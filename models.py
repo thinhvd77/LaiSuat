@@ -33,8 +33,23 @@ class Category(db.Model):
     )
 
     @property
-    def is_parent(self):
-        return self.parent_id is None
+    def depth(self):
+        """0 = root, 1 = level 1, 2 = level 2."""
+        if self.parent_id is None:
+            return 0
+        if self.parent and self.parent.parent_id is None:
+            return 1
+        return 2
+
+    @property
+    def is_leaf(self):
+        """True if category has no children. Only leaves can hold PDFs."""
+        return self.children.count() == 0
+
+    @property
+    def can_have_children(self):
+        """True if depth < 2 (root and level 1 can have children)."""
+        return self.depth < 2
 
     def to_dict(self):
         d = {
@@ -43,8 +58,11 @@ class Category(db.Model):
             "parent_id": self.parent_id,
             "is_default": self.is_default,
             "sort_order": self.sort_order,
+            "depth": self.depth,
+            "is_leaf": self.is_leaf,
+            "can_have_children": self.can_have_children,
         }
-        if self.is_parent:
+        if not self.is_leaf:
             d["children"] = [
                 child.to_dict()
                 for child in self.children.order_by(Category.sort_order.asc())
