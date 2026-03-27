@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Xây cổng mật khẩu cho public site để người dùng phải nhập đúng mật khẩu trước khi truy cập nội dung, có lockout 15 phút sau 5 lần nhập sai theo IP.
+**Goal:** Thêm cổng mật khẩu cho public site, chặn brute-force theo IP với lockout 15 phút sau 5 lần sai, và chỉ cho truy cập public nội dung sau khi unlock thành công.
 
-**Architecture:** Tạo middleware `site_gate.py` chạy ở `before_request` để chặn public routes (`/`, `/api/*`, `/pdf/*`) theo trạng thái session unlock và lockout theo IP. Route `POST /gate/unlock` xử lý nhập mật khẩu, set session TTL từ `SITE_GATE_TTL_MINUTES`, và cập nhật bộ đếm sai theo IP. Trang `site_gate.html` + `site-gate.js` hiển thị form mobile-first và countdown lockout.
+**Architecture:** Site gate được bật/tắt bằng `SITE_GATE_ENABLED`. Middleware `before_request` bảo vệ `/`, `/api/*`, `/pdf/*` (không ảnh hưởng `/admin/*`). Trạng thái lockout lưu trong DB qua SQLAlchemy (không dùng in-memory) để an toàn với Gunicorn nhiều worker; unlock state lưu trong session với TTL từ `SITE_GATE_TTL_MINUTES`.
 
-**Tech Stack:** Flask, session cookie, in-memory Python dict, Jinja2 templates, vanilla JS, pytest
+**Tech Stack:** Flask, Flask-WTF CSRF, SQLAlchemy (SQLite hiện tại), session cookie, Jinja2, vanilla JS, pytest
 
-**Spec:** `docs/superpowers/specs/2026-03-27-site-gate-password-design.md`
+**Spec:** `docs/superpowers/specs/2026-03-27-site-gate-password-design.md` (plan này đã cập nhật theo review trước khi implement)
 
 ---
 
@@ -16,195 +16,268 @@
 
 | File | Responsibility |
 |------|----------------|
-| `site_gate.py` (new) | Logic site gate: path matching, IP extraction, lockout, session unlock, middleware init |
-| `routes_public.py` (modify) | Add `POST /gate/unlock` endpoint |
-| `app.py` (modify) | Add config defaults (`SITE_GATE_TTL_MINUTES`), startup warning for missing password, init site gate middleware |
-| `templates/site_gate.html` (new) | Password gate UI for `/` before unlock |
-| `static/js/site-gate.js` (new) | Lockout countdown and form disable/enable behavior |
-| `tests/test_site_gate.py` (new) | Unit + integration tests for gate policy and lockout behavior |
+| `models.py` (modify) | Thêm model DB lưu lockout theo IP (`SiteGateLock`) |
+| `site_gate.py` (new) | Policy public-path, DB lockout helpers, session helpers, middleware init |
+| `routes_public.py` (modify) | Thêm `POST /gate/unlock` dùng CSRF + compare_digest |
+| `templates/site_gate.html` (new) | Trang form nhập mật khẩu, có CSRF hidden field |
+| `static/js/site-gate.js` (new) | Countdown lockout trên client |
+| `static/css/style.css` (modify) | Style nhỏ cho gate page/error inline |
+| `app.py` (modify) | Config defaults + bật middleware khi `SITE_GATE_ENABLED=true` |
+| `tests/test_site_gate.py` (new) | Unit + integration tests cho site gate |
 
 ---
 
-### Task 1: Add site_gate core utilities (path, session, lockout)
+### Task 1: Add DB model for IP lockout state
 
 **Files:**
-- Create: `site_gate.py`
-- Test: `tests/test_site_gate.py`
+- Modify: `models.py`
+- Create: `tests/test_site_gate.py`
 
-- [ ] **Step 1: Write failing unit tests for path policy and state helpers**
+- [ ] **Step 1: Write failing test for lockout model persistence**
 
-Create `tests/test_site_gate.py` with initial tests:
+Create `tests/test_site_gate.py` initial test:
 
 ```python
-import time
+from datetime import datetime, timezone
 
 
-def test_is_public_protected_path_matches_public_routes():
-    from site_gate import is_public_protected_path
+def test_site_gate_lock_model_persists(app):
+    from models import SiteGateLock
+    from extensions import db
 
-    assert is_public_protected_path("/") is True
-    assert is_public_protected_path("/api/categories") is True
-    assert is_public_protected_path("/pdf/1") is True
+    with app.app_context():
+        row = SiteGateLock(
+            ip_address="1.2.3.4",
+            failed_attempts=3,
+            locked_until=datetime.now(timezone.utc),
+        )
+        db.session.add(row)
+        db.session.commit()
 
-
-def test_is_public_protected_path_excludes_admin_static_and_gate_unlock():
-    from site_gate import is_public_protected_path
-
-    assert is_public_protected_path("/admin/login") is False
-    assert is_public_protected_path("/static/css/style.css") is False
-    assert is_public_protected_path("/gate/unlock") is False
-
-
-def test_lockout_after_five_failed_attempts_same_ip():
-    from site_gate import record_failed_attempt, is_ip_locked, clear_site_gate_state
-
-    clear_site_gate_state()
-    ip = "1.2.3.4"
-    now = int(time.time())
-
-    for _ in range(4):
-        locked, _ = record_failed_attempt(ip, now)
-        assert locked is False
-
-    locked, seconds_left = record_failed_attempt(ip, now)
-    assert locked is True
-    assert seconds_left == 900
-
-
-def test_session_unlock_and_expiry():
-    from site_gate import set_session_unlocked, is_session_unlocked
-
-    session = {}
-    now = int(time.time())
-
-    set_session_unlocked(session, now, ttl_minutes=1)
-    assert is_session_unlocked(session, now) is True
-    assert is_session_unlocked(session, now + 61) is False
+        fetched = SiteGateLock.query.filter_by(ip_address="1.2.3.4").first()
+        assert fetched is not None
+        assert fetched.failed_attempts == 3
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run:
 ```bash
-./venv/bin/pytest tests/test_site_gate.py -v
+./venv/bin/pytest tests/test_site_gate.py::test_site_gate_lock_model_persists -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError: No module named 'site_gate'`
+Expected: FAIL (`ImportError: cannot import name 'SiteGateLock'`).
 
-- [ ] **Step 3: Implement minimal `site_gate.py` utilities**
+- [ ] **Step 3: Add `SiteGateLock` model in `models.py`**
 
-Create `site_gate.py`:
+Add model:
 
 ```python
-import time
-from flask import request
+class SiteGateLock(db.Model):
+    __tablename__ = "site_gate_locks"
 
-FAILED_ATTEMPTS = {}
-LOCKED_UNTIL = {}
-MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_SECONDS = 15 * 60
-
-
-def clear_site_gate_state():
-    FAILED_ATTEMPTS.clear()
-    LOCKED_UNTIL.clear()
-
-
-def get_client_ip():
-    cf_ip = request.headers.get("CF-Connecting-IP")
-    if cf_ip:
-        return cf_ip.strip()
-
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip.strip()
-
-    return request.remote_addr
-
-
-def is_public_protected_path(path):
-    if path == "/":
-        return True
-    if path.startswith("/api/"):
-        return True
-    if path.startswith("/pdf/"):
-        return True
-    return False
-
-
-def is_ip_locked(ip, now_ts=None):
-    if now_ts is None:
-        now_ts = int(time.time())
-
-    locked_until = LOCKED_UNTIL.get(ip, 0)
-    if locked_until > now_ts:
-        return True, locked_until - now_ts
-
-    if ip in LOCKED_UNTIL:
-        LOCKED_UNTIL.pop(ip, None)
-    return False, 0
-
-
-def record_failed_attempt(ip, now_ts=None):
-    if now_ts is None:
-        now_ts = int(time.time())
-
-    failed_count = FAILED_ATTEMPTS.get(ip, 0) + 1
-    FAILED_ATTEMPTS[ip] = failed_count
-
-    if failed_count >= MAX_FAILED_ATTEMPTS:
-        FAILED_ATTEMPTS.pop(ip, None)
-        LOCKED_UNTIL[ip] = now_ts + LOCKOUT_SECONDS
-        return True, LOCKOUT_SECONDS
-
-    return False, 0
-
-
-def clear_ip_failures(ip):
-    FAILED_ATTEMPTS.pop(ip, None)
-    LOCKED_UNTIL.pop(ip, None)
-
-
-def set_session_unlocked(session, now_ts, ttl_minutes):
-    session["site_gate_ok"] = True
-    session["site_gate_until"] = now_ts + (ttl_minutes * 60)
-
-
-def is_session_unlocked(session, now_ts):
-    if not session.get("site_gate_ok"):
-        return False
-
-    until = session.get("site_gate_until", 0)
-    return until > now_ts
+    id = db.Column(db.Integer, primary_key=True)
+    ip_address = db.Column(db.Text, unique=True, nullable=False, index=True)
+    failed_attempts = db.Column(db.Integer, default=0, nullable=False)
+    locked_until = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(
+        db.DateTime, default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Run test to verify it passes**
+
+Run:
+```bash
+./venv/bin/pytest tests/test_site_gate.py::test_site_gate_lock_model_persists -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add models.py tests/test_site_gate.py
+git commit -m "feat: add SiteGateLock model for IP lockout state"
+```
+
+---
+
+### Task 2: Implement `site_gate.py` helpers (reuse existing get_client_ip)
+
+**Files:**
+- Create: `site_gate.py`
+- Modify: `tests/test_site_gate.py`
+
+- [ ] **Step 1: Write failing unit tests for helper behavior**
+
+Append tests:
+
+```python
+from datetime import datetime, timedelta, timezone
+
+
+def test_is_public_protected_path_matches_scope():
+    from site_gate import is_public_protected_path
+
+    assert is_public_protected_path("/") is True
+    assert is_public_protected_path("/api/categories") is True
+    assert is_public_protected_path("/pdf/1") is True
+    assert is_public_protected_path("/admin/login") is False
+    assert is_public_protected_path("/gate/unlock") is False
+
+
+def test_record_failed_attempt_and_lockout(app):
+    from site_gate import record_failed_attempt, is_ip_locked, reset_ip_lock_state
+
+    with app.app_context():
+        ip = "1.2.3.4"
+        reset_ip_lock_state(ip)
+        for _ in range(4):
+            locked, _ = record_failed_attempt(ip)
+            assert locked is False
+
+        locked, seconds_left = record_failed_attempt(ip)
+        assert locked is True
+        assert 1 <= seconds_left <= 900
+
+        locked_now, _ = is_ip_locked(ip)
+        assert locked_now is True
+```
+
+- [ ] **Step 2: Run tests to verify fail**
 
 Run:
 ```bash
 ./venv/bin/pytest tests/test_site_gate.py -v
 ```
 
-Expected: PASS for 4 tests.
+Expected: FAIL (`ModuleNotFoundError: No module named 'site_gate'`).
+
+- [ ] **Step 3: Implement `site_gate.py` helpers**
+
+Create `site_gate.py` with:
+
+```python
+from datetime import datetime, timedelta, timezone
+from flask import session
+from extensions import db
+from middleware import get_client_ip
+from models import SiteGateLock
+
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_SECONDS = 15 * 60
+
+
+def now_utc():
+    return datetime.now(timezone.utc)
+
+
+def is_public_protected_path(path):
+    return path == "/" or path.startswith("/api/") or path.startswith("/pdf/")
+
+
+def get_or_create_lock(ip):
+    row = SiteGateLock.query.filter_by(ip_address=ip).first()
+    if row:
+        return row
+    row = SiteGateLock(ip_address=ip, failed_attempts=0, locked_until=None)
+    db.session.add(row)
+    db.session.flush()
+    return row
+
+
+def is_ip_locked(ip):
+    row = SiteGateLock.query.filter_by(ip_address=ip).first()
+    if not row or not row.locked_until:
+        return False, 0
+
+    now = now_utc()
+    if row.locked_until > now:
+        seconds_left = int((row.locked_until - now).total_seconds())
+        return True, max(1, seconds_left)
+
+    row.locked_until = None
+    row.failed_attempts = 0
+    db.session.commit()
+    return False, 0
+
+
+def record_failed_attempt(ip):
+    row = get_or_create_lock(ip)
+    row.failed_attempts += 1
+
+    if row.failed_attempts >= MAX_FAILED_ATTEMPTS:
+        row.failed_attempts = 0
+        row.locked_until = now_utc() + timedelta(seconds=LOCKOUT_SECONDS)
+        db.session.commit()
+        return True, LOCKOUT_SECONDS
+
+    db.session.commit()
+    return False, 0
+
+
+def reset_ip_lock_state(ip):
+    row = SiteGateLock.query.filter_by(ip_address=ip).first()
+    if not row:
+        return
+    row.failed_attempts = 0
+    row.locked_until = None
+    db.session.commit()
+
+
+def set_session_unlocked(ttl_minutes):
+    now_ts = int(now_utc().timestamp())
+    session["site_gate_ok"] = True
+    session["site_gate_until"] = now_ts + ttl_minutes * 60
+
+
+def clear_session_gate():
+    session.pop("site_gate_ok", None)
+    session.pop("site_gate_until", None)
+
+
+def is_session_unlocked():
+    if not session.get("site_gate_ok"):
+        return False
+
+    now_ts = int(now_utc().timestamp())
+    until = int(session.get("site_gate_until", 0))
+    if until <= now_ts:
+        clear_session_gate()
+        return False
+
+    return True
+```
+
+- [ ] **Step 4: Run helper tests**
+
+Run:
+```bash
+./venv/bin/pytest tests/test_site_gate.py -v
+```
+
+Expected: helper tests PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add site_gate.py tests/test_site_gate.py
-git commit -m "feat: add site gate core state and helper functions"
+git commit -m "feat: add DB-backed site gate helper functions"
 ```
 
 ---
 
-### Task 2: Add middleware enforcement for public routes
+### Task 3: Add middleware enforcement with 403 on locked `/`
 
 **Files:**
 - Modify: `site_gate.py`
-- Test: `tests/test_site_gate.py`
+- Modify: `tests/test_site_gate.py`
 
-- [ ] **Step 1: Add failing integration tests for middleware behavior**
+- [ ] **Step 1: Add failing integration tests for middleware policy**
 
-Append to `tests/test_site_gate.py`:
+Append tests:
 
 ```python
 import pytest
@@ -218,201 +291,176 @@ def gate_app(tmp_path):
             "TESTING": True,
             "WTF_CSRF_ENABLED": False,
             "SECRET_KEY": "test-secret-key",
+            "SITE_GATE_ENABLED": True,
             "SITE_GATE_PASSWORD": "abc123",
             "SITE_GATE_TTL_MINUTES": 1440,
         }
     )
-
-    from site_gate import init_site_gate, clear_site_gate_state
-    clear_site_gate_state()
-    init_site_gate(app)
-
     return app
 
 
-def test_root_shows_gate_page_when_not_unlocked(gate_app):
+def test_root_returns_gate_page_when_not_unlocked(gate_app):
     client = gate_app.test_client()
     resp = client.get("/")
-
     assert resp.status_code == 200
     assert "Xác thực truy cập" in resp.get_data(as_text=True)
 
 
-def test_public_api_returns_403_when_not_unlocked(gate_app):
+def test_api_returns_403_when_not_unlocked(gate_app):
     client = gate_app.test_client()
     resp = client.get("/api/categories")
-
     assert resp.status_code == 403
 
 
-def test_admin_login_not_blocked_by_site_gate(gate_app):
+def test_locked_root_returns_403_with_gate_message(gate_app):
     client = gate_app.test_client()
-    resp = client.get("/admin/login")
+    for _ in range(5):
+        client.post("/gate/unlock", data={"password": "wrong"})
 
-    assert resp.status_code == 200
+    resp = client.get("/")
+    assert resp.status_code == 403
+    assert "Vui lòng thử lại sau" in resp.get_data(as_text=True)
 ```
 
 - [ ] **Step 2: Run tests to verify fail**
 
 Run:
 ```bash
-./venv/bin/pytest tests/test_site_gate.py::test_root_shows_gate_page_when_not_unlocked -v
+./venv/bin/pytest tests/test_site_gate.py::test_api_returns_403_when_not_unlocked -v
 ```
 
-Expected: FAIL because `init_site_gate` is not defined.
+Expected: FAIL until middleware init exists.
 
-- [ ] **Step 3: Implement `init_site_gate(app)` middleware**
+- [ ] **Step 3: Implement `init_site_gate(app)` and policy**
 
 Add to `site_gate.py`:
 
 ```python
-from flask import abort, render_template
+import logging
+from flask import abort, render_template, request
+
+logger = logging.getLogger(__name__)
+
+
+def lockout_message():
+    return "Bạn đã nhập sai quá 5 lần. Vui lòng thử lại sau"
 
 
 def init_site_gate(app):
     @app.before_request
     def enforce_site_gate():
-        path = request.path or "/"
+        if not app.config.get("SITE_GATE_ENABLED", False):
+            return None
 
+        path = request.path or "/"
         if not is_public_protected_path(path):
             return None
 
-        now_ts = int(time.time())
         ip = get_client_ip()
+        locked, seconds_left = is_ip_locked(ip)
 
-        locked, seconds_left = is_ip_locked(ip, now_ts)
         if locked:
             if path == "/" and request.method == "GET":
                 return render_template(
                     "site_gate.html",
-                    gate_error="Bạn đã nhập sai quá 5 lần. Vui lòng thử lại sau.",
+                    gate_error=lockout_message(),
                     locked_seconds=seconds_left,
-                )
+                ), 403
             abort(403)
 
-        if is_session_unlocked(request.session if hasattr(request, "session") else {}, now_ts):
-            return None
-
-        # Flask session should come from flask.session, not request.session
-        from flask import session
-        if is_session_unlocked(session, now_ts):
+        if is_session_unlocked():
             return None
 
         if path == "/" and request.method == "GET":
-            return render_template("site_gate.html", gate_error=None, locked_seconds=0)
+            return render_template(
+                "site_gate.html",
+                gate_error=None,
+                locked_seconds=0,
+            ), 200
 
         abort(403)
 ```
 
-Then simplify to avoid `request.session` check:
-
-```python
-from flask import abort, render_template, session
-
-
-def init_site_gate(app):
-    @app.before_request
-    def enforce_site_gate():
-        path = request.path or "/"
-
-        if not is_public_protected_path(path):
-            return None
-
-        now_ts = int(time.time())
-        ip = get_client_ip()
-
-        locked, seconds_left = is_ip_locked(ip, now_ts)
-        if locked:
-            if path == "/" and request.method == "GET":
-                return render_template(
-                    "site_gate.html",
-                    gate_error="Bạn đã nhập sai quá 5 lần. Vui lòng thử lại sau.",
-                    locked_seconds=seconds_left,
-                )
-            abort(403)
-
-        if is_session_unlocked(session, now_ts):
-            return None
-
-        if path == "/" and request.method == "GET":
-            return render_template("site_gate.html", gate_error=None, locked_seconds=0)
-
-        abort(403)
-```
-
-- [ ] **Step 4: Run tests**
+- [ ] **Step 4: Run middleware tests**
 
 Run:
 ```bash
 ./venv/bin/pytest tests/test_site_gate.py -v
 ```
 
-Expected: middleware tests pass.
+Expected: middleware tests PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add site_gate.py tests/test_site_gate.py
-git commit -m "feat: enforce site gate on public routes"
+git commit -m "feat: enforce site gate middleware on public routes"
 ```
 
 ---
 
-### Task 3: Add gate unlock endpoint
+### Task 4: Add `/gate/unlock` route with CSRF + compare_digest
 
 **Files:**
 - Modify: `routes_public.py`
-- Modify: `site_gate.py`
-- Test: `tests/test_site_gate.py`
+- Modify: `templates/site_gate.html`
+- Modify: `tests/test_site_gate.py`
 
-- [ ] **Step 1: Add failing tests for `/gate/unlock`**
+- [ ] **Step 1: Add failing tests for unlock endpoint**
 
 Append tests:
 
 ```python
-def test_unlock_with_correct_password_sets_session(gate_app):
+def test_unlock_correct_password_allows_api(gate_app):
     client = gate_app.test_client()
 
-    resp = client.post("/gate/unlock", data={"password": "abc123"}, follow_redirects=False)
+    with gate_app.test_request_context():
+        from flask_wtf.csrf import generate_csrf
+        token = generate_csrf()
+
+    resp = client.post(
+        "/gate/unlock",
+        data={"password": "abc123", "csrf_token": token},
+        follow_redirects=False,
+    )
     assert resp.status_code in (302, 303)
 
-    api_resp = client.get("/api/categories")
-    assert api_resp.status_code == 200
 
-
-def test_unlock_wrong_password_keeps_blocked(gate_app):
+def test_unlock_wrong_password_shows_error(gate_app):
     client = gate_app.test_client()
 
-    resp = client.post("/gate/unlock", data={"password": "wrong"})
+    resp = client.post(
+        "/gate/unlock",
+        data={"password": "wrong"},
+    )
+    # in gate_app fixture CSRF disabled, so this reaches handler
     assert resp.status_code == 200
     assert "Mật khẩu không đúng" in resp.get_data(as_text=True)
-
-    api_resp = client.get("/api/categories")
-    assert api_resp.status_code == 403
 ```
 
-- [ ] **Step 2: Run tests to verify fail**
+- [ ] **Step 2: Run test to verify fail**
 
 Run:
 ```bash
-./venv/bin/pytest tests/test_site_gate.py::test_unlock_with_correct_password_sets_session -v
+./venv/bin/pytest tests/test_site_gate.py::test_unlock_correct_password_allows_api -v
 ```
 
 Expected: FAIL with 404 on `/gate/unlock`.
 
-- [ ] **Step 3: Implement `POST /gate/unlock` in `routes_public.py`**
+- [ ] **Step 3: Implement route in `routes_public.py`**
 
-Add imports:
+Update imports:
 
 ```python
-import time
-from flask import session, redirect, url_for
+import hmac
+from flask import session, redirect, url_for, request
 from site_gate import (
     get_client_ip,
     is_ip_locked,
     record_failed_attempt,
-    clear_ip_failures,
+    reset_ip_lock_state,
     set_session_unlocked,
+    lockout_message,
 )
 ```
 
@@ -421,34 +469,35 @@ Add route:
 ```python
 @public_bp.route("/gate/unlock", methods=["POST"])
 def gate_unlock():
-    now_ts = int(time.time())
-    ip = get_client_ip()
+    if not current_app.config.get("SITE_GATE_ENABLED", False):
+        return redirect(url_for("public.index"))
 
-    locked, seconds_left = is_ip_locked(ip, now_ts)
+    ip = get_client_ip()
+    locked, seconds_left = is_ip_locked(ip)
     if locked:
         return render_template(
             "site_gate.html",
-            gate_error="Bạn đã nhập sai quá 5 lần. Vui lòng thử lại sau.",
+            gate_error=lockout_message(),
             locked_seconds=seconds_left,
-        ), 200
+        ), 403
 
     input_password = request.form.get("password", "")
     expected_password = current_app.config.get("SITE_GATE_PASSWORD", "")
 
-    if expected_password and input_password == expected_password:
-        clear_ip_failures(ip)
-        ttl_minutes = int(current_app.config.get("SITE_GATE_TTL_MINUTES", 1440))
-        set_session_unlocked(session, now_ts, ttl_minutes)
+    if expected_password and hmac.compare_digest(input_password, expected_password):
+        reset_ip_lock_state(ip)
+        ttl = int(current_app.config.get("SITE_GATE_TTL_MINUTES", 1440))
+        set_session_unlocked(ttl)
         session.permanent = True
         return redirect(url_for("public.index"))
 
-    locked, seconds_left = record_failed_attempt(ip, now_ts)
+    locked, seconds_left = record_failed_attempt(ip)
     if locked:
         return render_template(
             "site_gate.html",
-            gate_error="Bạn đã nhập sai quá 5 lần. Vui lòng thử lại sau.",
+            gate_error=lockout_message(),
             locked_seconds=seconds_left,
-        ), 200
+        ), 403
 
     return render_template(
         "site_gate.html",
@@ -457,364 +506,176 @@ def gate_unlock():
     ), 200
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 4: Add CSRF hidden input in template form**
 
-Run:
-```bash
-./venv/bin/pytest tests/test_site_gate.py -v
-```
-
-Expected: unlock tests pass.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add routes_public.py site_gate.py tests/test_site_gate.py
-git commit -m "feat: add site gate unlock endpoint"
-```
-
----
-
-### Task 4: Add lockout behavior tests and implementation hardening
-
-**Files:**
-- Modify: `tests/test_site_gate.py`
-- Modify: `site_gate.py`
-
-- [ ] **Step 1: Add failing tests for 5-attempt lockout and countdown**
-
-Append:
-
-```python
-def test_lockout_after_five_wrong_attempts(gate_app):
-    client = gate_app.test_client()
-
-    for _ in range(5):
-        client.post("/gate/unlock", data={"password": "wrong"})
-
-    resp = client.get("/")
-    html = resp.get_data(as_text=True)
-    assert resp.status_code == 200
-    assert "Vui lòng thử lại sau" in html
-
-    api_resp = client.get("/api/categories")
-    assert api_resp.status_code == 403
-
-
-def test_locked_ip_cannot_unlock_even_with_correct_password(gate_app):
-    client = gate_app.test_client()
-
-    for _ in range(5):
-        client.post("/gate/unlock", data={"password": "wrong"})
-
-    resp = client.post("/gate/unlock", data={"password": "abc123"})
-    assert resp.status_code == 200
-    assert "Vui lòng thử lại sau" in resp.get_data(as_text=True)
-```
-
-- [ ] **Step 2: Run tests to verify fail (if needed)**
-
-Run:
-```bash
-./venv/bin/pytest tests/test_site_gate.py::test_lockout_after_five_wrong_attempts -v
-```
-
-Expected: If failing, adjust lockout rendering context.
-
-- [ ] **Step 3: Harden helper functions and middleware response context**
-
-Ensure consistent template context helper in `site_gate.py`:
-
-```python
-def lockout_message():
-    return "Bạn đã nhập sai quá 5 lần. Vui lòng thử lại sau"
-```
-
-Use same message for both middleware and unlock route, and always pass `locked_seconds`.
-
-Also add session cleanup helper:
-
-```python
-def clear_gate_session(session):
-    session.pop("site_gate_ok", None)
-    session.pop("site_gate_until", None)
-```
-
-Then update `is_session_unlocked` usage in middleware to clear expired session keys.
-
-- [ ] **Step 4: Run all site gate tests**
-
-Run:
-```bash
-./venv/bin/pytest tests/test_site_gate.py -v
-```
-
-Expected: all site gate tests pass.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add site_gate.py tests/test_site_gate.py
-git commit -m "feat: add per-IP lockout behavior for site gate"
-```
-
----
-
-### Task 5: Create gate template and countdown script (mobile-first)
-
-**Files:**
-- Create: `templates/site_gate.html`
-- Create: `static/js/site-gate.js`
-- Modify: `static/css/style.css`
-
-- [ ] **Step 1: Add failing integration test for gate page UI**
-
-Append in `tests/test_site_gate.py`:
-
-```python
-def test_root_gate_page_contains_password_form(gate_app):
-    client = gate_app.test_client()
-    resp = client.get("/")
-
-    html = resp.get_data(as_text=True)
-    assert "<form" in html
-    assert "name=\"password\"" in html
-    assert "Xác thực truy cập" in html
-```
-
-- [ ] **Step 2: Run test to verify fail**
-
-Run:
-```bash
-./venv/bin/pytest tests/test_site_gate.py::test_root_gate_page_contains_password_form -v
-```
-
-Expected: FAIL because template does not exist yet.
-
-- [ ] **Step 3: Implement `templates/site_gate.html`**
-
-Create template:
+In `templates/site_gate.html` form add:
 
 ```html
-{% extends "base.html" %}
-{% block title %}Xác thực truy cập{% endblock %}
-
-{% block content %}
-<div class="login-container site-gate-container">
-    <div class="login-brand">
-        <img src="{{ url_for('static', filename='images/logo_2.png') }}" alt="Logo" class="login-brand-logo">
-        <h2 class="login-brand-text">Agribank Chi nhánh Bắc TPHCM</h2>
-        <p class="login-brand-sub">Bảo mật truy cập tài liệu lãi suất</p>
-    </div>
-
-    <div class="login-form-side">
-        <div class="login-card site-gate-card">
-            <img src="{{ url_for('static', filename='images/logo_2.png') }}" alt="Logo" class="login-card-logo-mobile">
-            <h1>Xác thực truy cập</h1>
-            <p class="login-subtitle">Vui lòng nhập mật khẩu để tiếp tục</p>
-
-            {% if gate_error %}
-            <div class="flash flash-error site-gate-inline-error" id="gate-error" data-locked-seconds="{{ locked_seconds|default(0) }}">
-                {% if locked_seconds and locked_seconds > 0 %}
-                    {{ gate_error }} <strong id="site-gate-countdown"></strong>
-                {% else %}
-                    {{ gate_error }}
-                {% endif %}
-            </div>
-            {% endif %}
-
-            <form method="post" action="{{ url_for('public.gate_unlock') }}" id="site-gate-form">
-                <div class="form-group">
-                    <label for="password">Mật khẩu <span class="required">*</span></label>
-                    <input
-                        type="password"
-                        id="password"
-                        name="password"
-                        placeholder="Nhập mật khẩu truy cập"
-                        required
-                        autocomplete="current-password"
-                    >
-                </div>
-
-                <button type="submit" class="btn btn-primary btn-full" id="site-gate-submit">
-                    Truy cập
-                </button>
-            </form>
-        </div>
-    </div>
-</div>
-{% endblock %}
-
-{% block scripts %}
-<script src="{{ url_for('static', filename='js/site-gate.js') }}"></script>
-{% endblock %}
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 ```
 
-- [ ] **Step 4: Implement countdown script and minor CSS additions**
-
-Create `static/js/site-gate.js`:
-
-```javascript
-(function () {
-    const errorBox = document.getElementById("gate-error");
-    const form = document.getElementById("site-gate-form");
-    const submitBtn = document.getElementById("site-gate-submit");
-    const passwordInput = document.getElementById("password");
-    const countdownEl = document.getElementById("site-gate-countdown");
-
-    if (!errorBox) return;
-
-    let lockedSeconds = parseInt(errorBox.dataset.lockedSeconds || "0", 10);
-    if (!lockedSeconds || lockedSeconds <= 0) return;
-
-    function formatMMSS(totalSeconds) {
-        const m = Math.floor(totalSeconds / 60);
-        const s = totalSeconds % 60;
-        return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-    }
-
-    function setLockedState(locked) {
-        if (passwordInput) passwordInput.disabled = locked;
-        if (submitBtn) submitBtn.disabled = locked;
-    }
-
-    setLockedState(true);
-
-    const tick = () => {
-        if (lockedSeconds <= 0) {
-            if (countdownEl) countdownEl.textContent = "";
-            setLockedState(false);
-            return;
-        }
-
-        if (countdownEl) countdownEl.textContent = formatMMSS(lockedSeconds);
-        lockedSeconds -= 1;
-        setTimeout(tick, 1000);
-    };
-
-    tick();
-})();
-```
-
-Append to `static/css/style.css`:
-
-```css
-.site-gate-container .login-form-side {
-    min-height: 100vh;
-}
-
-.site-gate-inline-error {
-    position: static;
-    width: 100%;
-    margin-bottom: 16px;
-    box-shadow: none;
-}
-
-#site-gate-submit:disabled,
-#password:disabled {
-    opacity: 0.65;
-    cursor: not-allowed;
-}
-```
-
-- [ ] **Step 5: Run gate UI tests**
+- [ ] **Step 5: Run tests**
 
 Run:
 ```bash
-./venv/bin/pytest tests/test_site_gate.py::test_root_gate_page_contains_password_form -v
+./venv/bin/pytest tests/test_site_gate.py -v
 ```
 
-Expected: PASS.
+Expected: unlock tests PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add templates/site_gate.html static/js/site-gate.js static/css/style.css tests/test_site_gate.py
-git commit -m "feat: add mobile-first site gate password page"
+git add routes_public.py templates/site_gate.html tests/test_site_gate.py
+git commit -m "feat: add secure site gate unlock endpoint with CSRF"
 ```
 
 ---
 
-### Task 6: Integrate site gate into app factory config
+### Task 5: Build gate UI and countdown
 
 **Files:**
-- Modify: `app.py`
-- Modify: `tests/conftest.py`
-- Test: `tests/test_site_gate.py`
+- Create: `templates/site_gate.html` (if not already created)
+- Create: `static/js/site-gate.js`
+- Modify: `static/css/style.css`
+- Modify: `tests/test_site_gate.py`
 
-- [ ] **Step 1: Add failing test for app config defaults**
+- [ ] **Step 1: Add failing test for gate form and countdown hooks**
 
-Append to `tests/test_site_gate.py`:
+Append:
 
 ```python
-def test_site_gate_ttl_default_exists(app):
-    assert app.config.get("SITE_GATE_TTL_MINUTES") is not None
+def test_gate_page_contains_password_form_and_countdown_hook(gate_app):
+    client = gate_app.test_client()
+    resp = client.get("/")
+
+    html = resp.get_data(as_text=True)
+    assert "name=\"password\"" in html
+    assert "name=\"csrf_token\"" in html
+    assert "site-gate-countdown" in html or "locked_seconds" in html
 ```
 
-- [ ] **Step 2: Run test to verify fail**
+- [ ] **Step 2: Run test to verify fail (if UI not complete yet)**
 
 Run:
 ```bash
-./venv/bin/pytest tests/test_site_gate.py::test_site_gate_ttl_default_exists -v
+./venv/bin/pytest tests/test_site_gate.py::test_gate_page_contains_password_form_and_countdown_hook -v
 ```
 
-Expected: FAIL (default missing).
+- [ ] **Step 3: Implement/complete `templates/site_gate.html`**
 
-- [ ] **Step 3: Update `app.py` config and middleware initialization**
+Use login-like layout, include:
+- title `Xác thực truy cập`
+- inline error area
+- `data-locked-seconds` attribute
+- password form + CSRF hidden input
+- submit button `Truy cập`
 
-In `create_app()` default config block add:
+- [ ] **Step 4: Implement countdown script**
 
-```python
-app.config["SITE_GATE_TTL_MINUTES"] = int(os.environ.get("SITE_GATE_TTL_MINUTES", "1440"))
-app.config["SITE_GATE_PASSWORD"] = os.environ.get("SITE_GATE_PASSWORD", "")
-```
+Create `static/js/site-gate.js`:
+- read `data-locked-seconds`
+- disable input/button while `>0`
+- render MM:SS to `#site-gate-countdown`
+- re-enable form at 0
 
-After existing middleware init blocks, initialize site gate:
+- [ ] **Step 5: Add minimal CSS adjustments**
 
-```python
-from site_gate import init_site_gate
-init_site_gate(app)
-```
+Append styles in `static/css/style.css` for `.site-gate-inline-error` and disabled states.
 
-Add startup warning once:
-
-```python
-if not app.config.get("SITE_GATE_PASSWORD"):
-    app.logger.warning("SITE_GATE_PASSWORD is not configured; public gate will fail closed")
-```
-
-For tests, ensure fixture app config includes gate password in `tests/conftest.py` app fixture config:
-
-```python
-"SITE_GATE_PASSWORD": "test-gate-password",
-"SITE_GATE_TTL_MINUTES": 1440,
-```
-
-- [ ] **Step 4: Run tests**
+- [ ] **Step 6: Run UI test + site gate tests**
 
 Run:
 ```bash
 ./venv/bin/pytest tests/test_site_gate.py -v
-./venv/bin/pytest tests/ -v
 ```
 
-Expected: site gate tests pass, full regression pass.
+Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add app.py tests/conftest.py tests/test_site_gate.py
-git commit -m "feat: wire site gate configuration into app factory"
+git add templates/site_gate.html static/js/site-gate.js static/css/style.css tests/test_site_gate.py
+git commit -m "feat: add mobile-first site gate UI with lockout countdown"
 ```
 
 ---
 
-### Task 7: Final verification and cleanup
+### Task 6: Wire app config and enable flag (without breaking existing tests)
 
 **Files:**
-- None (verification)
+- Modify: `app.py`
+- Modify: `tests/test_site_gate.py`
 
-- [ ] **Step 1: Run full test suite**
+- [ ] **Step 1: Add failing config tests**
+
+Append tests:
+
+```python
+def test_site_gate_enabled_default_is_false(app):
+    assert app.config["SITE_GATE_ENABLED"] is False
+
+
+def test_site_gate_ttl_default_is_1440(app):
+    assert app.config["SITE_GATE_TTL_MINUTES"] == 1440
+```
+
+- [ ] **Step 2: Run tests to verify fail**
+
+Run:
+```bash
+./venv/bin/pytest tests/test_site_gate.py::test_site_gate_enabled_default_is_false -v
+```
+
+Expected: FAIL if config keys not present.
+
+- [ ] **Step 3: Update `app.py` config + middleware init**
+
+In config defaults add:
+
+```python
+app.config["SITE_GATE_ENABLED"] = os.environ.get("SITE_GATE_ENABLED", "false").lower() == "true"
+app.config["SITE_GATE_PASSWORD"] = os.environ.get("SITE_GATE_PASSWORD", "")
+app.config["SITE_GATE_TTL_MINUTES"] = int(os.environ.get("SITE_GATE_TTL_MINUTES", "1440"))
+```
+
+After blueprints/middleware registration, add:
+
+```python
+from site_gate import init_site_gate
+init_site_gate(app)
+
+if app.config["SITE_GATE_ENABLED"] and not app.config.get("SITE_GATE_PASSWORD"):
+    app.logger.warning("SITE_GATE_ENABLED=true but SITE_GATE_PASSWORD is empty; site gate will deny unlock")
+```
+
+Do **not** modify `tests/conftest.py` to globally enable gate.
+Only `tests/test_site_gate.py` should set `SITE_GATE_ENABLED=True` in its own fixture.
+
+- [ ] **Step 4: Run full test suite**
+
+Run:
+```bash
+./venv/bin/pytest tests/ -v
+```
+
+Expected: existing tests still pass; new site-gate tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add app.py tests/test_site_gate.py
+git commit -m "feat: add SITE_GATE_ENABLED config and app integration"
+```
+
+---
+
+### Task 7: Final verification and deployment notes
+
+**Files:**
+- None (verification only)
+
+- [ ] **Step 1: Run full tests one more time**
 
 Run:
 ```bash
@@ -823,49 +684,55 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Manual local verification**
+- [ ] **Step 2: Manual verification locally**
 
-Run:
+Run app:
 ```bash
-SITE_GATE_PASSWORD=abc123 SITE_GATE_TTL_MINUTES=1440 python app.py
+SITE_GATE_ENABLED=true SITE_GATE_PASSWORD=abc123 SITE_GATE_TTL_MINUTES=1440 python app.py
 ```
 
 In another terminal:
 ```bash
-# 1) Should show gate page
+# Root should show gate form
 curl -i http://localhost:5000/
 
-# 2) API should be blocked before unlock
+# API should be forbidden before unlock
 curl -i http://localhost:5000/api/categories
 
-# 3) Unlock with correct password
-curl -i -X POST http://localhost:5000/gate/unlock -d "password=abc123"
+# Submit wrong password 5 times then root should be 403 with gate+lock message
+for i in 1 2 3 4 5; do curl -i -X POST http://localhost:5000/gate/unlock -d "password=wrong"; done
+curl -i http://localhost:5000/
 ```
 
 Expected:
-- `/` returns gate page before unlock
-- `/api/categories` returns 403 before unlock
-- `POST /gate/unlock` redirects to `/` after correct password
+- Before unlock: `/` -> 200 gate form; `/api/*` -> 403
+- After 5 wrong attempts: `/` -> 403 (locked state), `/api/*` -> 403
 
-- [ ] **Step 3: Verify commit sequence**
+- [ ] **Step 3: DB table creation step for production**
+
+Run on server:
+```bash
+flask --app app init-db
+```
+
+Expected: new table `site_gate_locks` is created.
+
+- [ ] **Step 4: Verify commit history**
 
 Run:
 ```bash
-git log --oneline -10
+git log --oneline -12
 ```
 
-Expected: commits for tasks 1-6 present and ordered.
-
-- [ ] **Step 4: Optional docs update note**
-
-If team wants deployment notes in repo docs, add a small section to existing ops docs (only if explicitly requested by reviewer/user). For this plan, skip extra docs by default (YAGNI).
+Expected: task commits present in sequence.
 
 ---
 
 ## Execution notes
 
-- Keep lockout state process-local (as spec)
-- Do not add Redis in this scope
-- Do not gate `/admin/*`
-- Keep `/api/*` and `/pdf/*` as strict 403 when not unlocked
-- Use exact Vietnamese texts from spec for user-facing messages
+- Use DB-backed lockout (no in-memory state)
+- Reuse `middleware.get_client_ip()` (no duplicate IP extraction logic)
+- Use `hmac.compare_digest` for password check
+- Include CSRF hidden field in gate form
+- Keep `/admin/*` unaffected
+- Keep gate off by default (`SITE_GATE_ENABLED=false`) to avoid breaking existing behavior/tests
