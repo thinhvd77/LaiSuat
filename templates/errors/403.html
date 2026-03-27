@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}403 — Truy cập bị từ chối{% endblock %}
+{% block content %}
+<div class="error-page">
+    <img src="{{ url_for('static', filename='images/logo_2.png') }}" alt="" class="error-page-logo">
+    <h1>403</h1>
+    <p>Truy cập bị từ chối</p>
+    <small>Bạn không có quyền truy cập trang này.</small>
+</div>
+{% endblock %}
