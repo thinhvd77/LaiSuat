@@ -1,0 +1,12 @@
+# Danh sách IP được phép truy cập
+# Mỗi dòng một IP, dòng trống và comment (#) được bỏ qua
+# Copy file này thành ip_whitelist.txt và thêm IP thực của công ty
+
+# Văn phòng chính
+# 113.161.x.x
+
+# Chi nhánh Hà Nội
+# 118.70.x.x
+
+# Chi nhánh Đà Nẵng
+# 171.244.x.x
