@@ -1,5 +1,10 @@
 """Tests cho IP restriction middleware."""
 import pytest
+import tempfile
+import os
+
+from app import create_app
+from extensions import db as _db
 
 
 class TestLoadIPWhitelist:
@@ -82,3 +87,84 @@ class TestGetClientIP:
 
         with app.test_request_context(headers={"CF-Connecting-IP": "  1.1.1.1  "}):
             assert get_client_ip() == "1.1.1.1"
+
+
+class TestIPRestrictionMiddleware:
+    """Test middleware chặn IP."""
+
+    @pytest.fixture
+    def app_with_ip_restriction(self, tmp_path):
+        """App với IP restriction enabled."""
+        # Tạo whitelist với IP được phép
+        whitelist = tmp_path / "ip_whitelist.txt"
+        whitelist.write_text("1.1.1.1\n2.2.2.2\n")
+
+        db_fd, db_path = tempfile.mkstemp()
+        upload_dir = tempfile.mkdtemp()
+
+        app = create_app(
+            {
+                "TESTING": True,
+                "SQLALCHEMY_DATABASE_URI": f"sqlite:///{db_path}",
+                "UPLOAD_FOLDER": upload_dir,
+                "WTF_CSRF_ENABLED": False,
+                "SECRET_KEY": "test-secret-key",
+                "IP_WHITELIST_PATH": str(whitelist),
+            }
+        )
+
+        # Manually init IP restriction (since test_config disables it)
+        from middleware import init_ip_restriction
+        init_ip_restriction(app, str(whitelist))
+
+        with app.app_context():
+            _db.create_all()
+
+        yield app
+
+        os.close(db_fd)
+        os.unlink(db_path)
+
+    def test_allowed_ip_can_access(self, app_with_ip_restriction):
+        """IP trong whitelist truy cập được."""
+        client = app_with_ip_restriction.test_client()
+
+        response = client.get(
+            "/",
+            headers={"CF-Connecting-IP": "1.1.1.1"}
+        )
+
+        assert response.status_code == 200
+
+    def test_blocked_ip_gets_403(self, app_with_ip_restriction):
+        """IP không trong whitelist bị chặn."""
+        client = app_with_ip_restriction.test_client()
+
+        response = client.get(
+            "/",
+            headers={"CF-Connecting-IP": "9.9.9.9"}
+        )
+
+        assert response.status_code == 403
+
+    def test_blocked_ip_on_admin_route(self, app_with_ip_restriction):
+        """Admin route cũng bị chặn."""
+        client = app_with_ip_restriction.test_client()
+
+        response = client.get(
+            "/admin/login",
+            headers={"CF-Connecting-IP": "9.9.9.9"}
+        )
+
+        assert response.status_code == 403
+
+    def test_allowed_ip_on_api_route(self, app_with_ip_restriction):
+        """API route cho phép IP hợp lệ."""
+        client = app_with_ip_restriction.test_client()
+
+        response = client.get(
+            "/api/categories",
+            headers={"CF-Connecting-IP": "2.2.2.2"}
+        )
+
+        assert response.status_code == 200
