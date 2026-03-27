@@ -91,6 +91,9 @@ pip install -r requirements.txt
 cat > .env << 'EOF'
 SECRET_KEY=thay-bang-chuoi-random-dai-va-phuc-tap
 DATABASE_URL=sqlite:///database.db
+SITE_GATE_ENABLED=false
+SITE_GATE_PASSWORD=
+SITE_GATE_TTL_MINUTES=1440
 EOF
 ```
 
@@ -107,6 +110,8 @@ source venv/bin/activate
 export $(cat .env | xargs)
 flask --app app init-db
 ```
+
+Lệnh này cũng tạo bảng `site_gate_locks` cho tính năng cổng mật khẩu public site.
 
 ### 3.6. Tạo thư mục cần thiết & phân quyền
 

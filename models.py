@@ -125,3 +125,17 @@ class Admin(UserMixin, db.Model):
         return bcrypt.checkpw(
             raw_password.encode("utf-8"), self.password.encode("utf-8")
         )
+
+
+class SiteGateLock(db.Model):
+    __tablename__ = "site_gate_locks"
+
+    id = db.Column(db.Integer, primary_key=True)
+    ip_address = db.Column(db.Text, unique=True, nullable=False, index=True)
+    failed_attempts = db.Column(db.Integer, default=0, nullable=False)
+    locked_until = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Xác thực truy cập{% endblock %}
+
+{% block content %}
+<div class="login-container site-gate-container">
+    <div class="login-brand">
+        <img src="{{ url_for('static', filename='images/logo_2.png') }}" alt="Logo" class="login-brand-logo">
+        <div class="login-brand-text">Agribank Chi nhánh Bắc TPHCM</div>
+        <div class="login-brand-sub">Bảo mật truy cập tài liệu lãi suất</div>
+    </div>
+
+    <div class="login-form-side">
+        <div class="login-card site-gate-card">
+            <img src="{{ url_for('static', filename='images/logo_2.png') }}" alt="Logo" class="login-card-logo-mobile">
+            <h1>Xác thực truy cập</h1>
+            <p class="login-subtitle">Vui lòng nhập mật khẩu để tiếp tục</p>
+
+            {% if gate_error %}
+            <div class="flash flash-error site-gate-inline-error" id="gate-error" data-locked-seconds="{{ locked_seconds|default(0) }}">
+                {{ gate_error }}
+                {% if locked_seconds and locked_seconds > 0 %}
+                <strong id="site-gate-countdown"></strong>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <form method="POST" action="{{ url_for('public.gate_unlock') }}" id="site-gate-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="form-group">
+                    <label for="password">Mật khẩu <span class="required">*</span></label>
+                    <input
+                        type="password"
+                        id="password"
+                        name="password"
+                        placeholder="Nhập mật khẩu truy cập"
+                        required
+                        autocomplete="current-password"
+                        autofocus
+                    >
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-full" id="site-gate-submit">
+                    Truy cập
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/site-gate.js') }}"></script>
+{% endblock %}

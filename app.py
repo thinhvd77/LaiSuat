@@ -25,6 +25,9 @@ def create_app(test_config=None):
     app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "uploads")
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
+    app.config["SITE_GATE_ENABLED"] = os.environ.get("SITE_GATE_ENABLED", "false").lower() == "true"
+    app.config["SITE_GATE_PASSWORD"] = os.environ.get("SITE_GATE_PASSWORD", "")
+    app.config["SITE_GATE_TTL_MINUTES"] = int(os.environ.get("SITE_GATE_TTL_MINUTES", "1440"))
 
     if test_config:
         app.config.update(test_config)
@@ -90,6 +93,14 @@ def create_app(test_config=None):
     if not test_config:
         from middleware import init_ip_restriction
         init_ip_restriction(app)
+
+    from site_gate import init_site_gate
+    init_site_gate(app)
+
+    if app.config["SITE_GATE_ENABLED"] and not app.config.get("SITE_GATE_PASSWORD"):
+        app.logger.warning(
+            "SITE_GATE_ENABLED=true but SITE_GATE_PASSWORD is empty; site gate will deny unlock"
+        )
 
     @app.errorhandler(404)
     def not_found(e):
