@@ -86,6 +86,11 @@ def create_app(test_config=None):
     from routes_public import public_bp
     app.register_blueprint(public_bp)
 
+    # IP restriction middleware (disabled in test mode)
+    if not test_config:
+        from middleware import init_ip_restriction
+        init_ip_restriction(app)
+
     @app.errorhandler(404)
     def not_found(e):
         return render_template("errors/404.html"), 404
@@ -97,6 +102,10 @@ def create_app(test_config=None):
     @app.errorhandler(500)
     def server_error(e):
         return render_template("errors/500.html"), 500
+
+    @app.errorhandler(403)
+    def forbidden(e):
+        return render_template("errors/403.html"), 403
 
     return app
 
