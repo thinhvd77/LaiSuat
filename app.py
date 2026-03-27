@@ -126,12 +126,12 @@ if __name__ == "__main__":
     if "--init-db" in sys.argv:
         with app.app_context():
             db.create_all()
-            if not Admin.query.filter_by(username="admin").first():
-                admin = Admin(username="admin")
+            if not Admin.query.filter_by(username="quantri").first():
+                admin = Admin(username="quantri")
                 admin.set_password("admin123")
                 db.session.add(admin)
                 db.session.commit()
-                print("Default admin created: admin / admin123")
+                print("Default admin created: quantri / admin123")
 
             default_parents = [
                 "Lãi suất",
