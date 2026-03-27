@@ -90,9 +90,9 @@ def create_app(test_config=None):
     app.register_blueprint(public_bp)
 
     # IP restriction middleware (disabled in test mode)
-    if not test_config:
-        from middleware import init_ip_restriction
-        init_ip_restriction(app)
+    # if not test_config:
+    #     from middleware import init_ip_restriction
+    #     init_ip_restriction(app)
 
     from site_gate import init_site_gate
     init_site_gate(app)
