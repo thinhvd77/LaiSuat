@@ -189,9 +189,6 @@ def update_category(cat_id):
     if not cat:
         return {"error": "Không tìm thấy danh mục"}, 404
 
-    if cat.is_default:
-        return {"error": "Không thể sửa danh mục mặc định"}, 400
-
     data = request.get_json()
     if data.get("name"):
         cat.name = data["name"]

@@ -216,13 +216,14 @@ class TestCategoryCRUD:
         assert resp.get_json()["name"] == "New Name"
         assert resp.get_json()["sort_order"] == 5
 
-    def test_cannot_update_default_category(self, app, auth_client):
+    def test_update_default_category(self, app, auth_client):
         parent_id = _get_parent_id(app)
         resp = auth_client.put(
             f"/admin/categories/{parent_id}",
             json={"name": "Renamed"},
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert resp.get_json()["name"] == "Renamed"
 
     def test_cannot_delete_default_category(self, app, auth_client):
         parent_id = _get_parent_id(app)

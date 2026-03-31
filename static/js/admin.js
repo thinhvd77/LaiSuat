@@ -203,6 +203,7 @@ async function loadCategories() {
                 <div class="sidebar-group-header" data-parent-id="${p.id}">
                     <span class="sidebar-group-name">${p.name}</span>
                     <span class="sidebar-group-meta">
+                        <button class="btn-icon" title="Sửa" onclick="editCategory(${p.id}, event)">✏️</button>
                         <button class="btn-icon btn-icon-add" title="Thêm danh mục con" onclick="openAddCategoryForParent(${p.id}, event)">+</button>
                         <svg class="sidebar-group-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="6 9 12 15 18 9"></polyline>
@@ -219,7 +220,7 @@ async function loadCategories() {
     // Root accordion toggle (DOM-only, skip if clicking buttons)
     list.querySelectorAll(".sidebar-group-header").forEach((el) => {
         el.addEventListener("click", (e) => {
-            if (e.target.closest(".btn-icon-add")) return;
+            if (e.target.closest(".btn-icon")) return;
             const parentId = parseInt(el.dataset.parentId);
             const group = el.closest(".sidebar-group");
             if (expandedParents.has(parentId)) {
