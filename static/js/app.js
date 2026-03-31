@@ -49,6 +49,7 @@ function countPdfs(cat) {
 
 function findFirstLeaf(parents) {
     for (const p of parents) {
+        if (p.is_leaf) return p;
         if (p.children) {
             for (const c of p.children) {
                 if (c.is_leaf) return c;
@@ -85,6 +86,10 @@ async function loadCategories() {
     if (expandedParents.size === 0) {
         let found = false;
         for (const p of parents) {
+            if (p.id === currentCategoryId && p.is_leaf) {
+                found = true;
+                break;
+            }
             if (p.children) {
                 for (const c of p.children) {
                     if (c.id === currentCategoryId) {
@@ -120,6 +125,14 @@ async function loadCategories() {
 
     list.innerHTML = parents
         .map((p) => {
+            if (p.is_leaf) {
+                return `
+                <div class="sidebar-item ${p.id === currentCategoryId ? "active" : ""}" data-id="${p.id}">
+                    <span class="sidebar-item-text">${p.name}</span>
+                    <span class="sidebar-item-count">${p.pdf_count || 0}</span>
+                </div>`;
+            }
+
             const isExpanded = expandedParents.has(p.id);
             const totalPdfs = countPdfs(p);
 

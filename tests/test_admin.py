@@ -156,6 +156,27 @@ class TestCategoryCRUD:
         assert data["name"] == "Lãi suất cho vay"
         assert data["pdf_count"] == 1
 
+    def test_create_root_category_with_pdf(self, auth_client):
+        """Create root category with optional PDF file."""
+        import io
+
+        pdf_bytes = b"%PDF-1.4 fake pdf content for testing"
+        resp = auth_client.post(
+            "/admin/categories",
+            data={
+                "name": "Danh mục gốc mới",
+                "pdf_title": "PDF danh mục gốc",
+                "file": (io.BytesIO(pdf_bytes), "root-category.pdf"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data["name"] == "Danh mục gốc mới"
+        assert data["parent_id"] is None
+        assert data["depth"] == 0
+        assert data["pdf_count"] == 1
+
     def test_create_category_missing_name(self, app, auth_client):
         parent_id = _get_parent_id(app)
         resp = auth_client.post(
@@ -171,7 +192,11 @@ class TestCategoryCRUD:
             data={"name": "No Parent"},
             content_type="multipart/form-data",
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data["name"] == "No Parent"
+        assert data["parent_id"] is None
+        assert data["depth"] == 0
 
     def test_update_child_category(self, app, auth_client):
         parent_id = _get_parent_id(app)
@@ -291,7 +316,7 @@ class TestPdfUploadDelete:
             assert os.path.exists(filepath)
 
     def test_upload_to_parent_rejected(self, app, auth_client):
-        """Cannot upload PDF directly to a parent category."""
+        """Can upload PDF directly to a root leaf category."""
         parent_id = _get_parent_id(app)
         data = {
             "title": "Direct to parent",
@@ -303,7 +328,7 @@ class TestPdfUploadDelete:
             data=data,
             content_type="multipart/form-data",
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 201
 
     def test_upload_non_pdf_rejected(self, app, auth_client):
         cat_id = self._create_child_category(app, auth_client)
@@ -495,9 +520,14 @@ class TestThreeLevelCategories:
         resp = auth_client.delete(f"/admin/categories/{l1_id}")
         assert resp.status_code == 400
 
-    def test_upload_to_root_rejected(self, app, auth_client):
-        """Cannot upload PDF to root category (depth 0)."""
+    def test_upload_to_root_with_children_rejected(self, app, auth_client):
+        """Cannot upload PDF to root category that already has children."""
         parent_id = _get_parent_id(app)
+        auth_client.post(
+            "/admin/categories",
+            data={"name": "Root child", "parent_id": str(parent_id)},
+            content_type="multipart/form-data",
+        )
         data = {
             "title": "Root upload",
             "category_id": str(parent_id),

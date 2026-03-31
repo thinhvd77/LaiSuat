@@ -61,6 +61,23 @@ function countPdfs(cat) {
     return cat.children.reduce((sum, c) => sum + countPdfs(c), 0);
 }
 
+function findFirstSelectableCategory(parents) {
+    for (const p of parents) {
+        if (p.is_leaf) return p;
+        if (p.children) {
+            for (const c of p.children) {
+                if (c.is_leaf) return c;
+                if (c.children) {
+                    for (const gc of c.children) {
+                        if (gc.is_leaf) return gc;
+                    }
+                }
+            }
+        }
+    }
+    return null;
+}
+
 // ─── Categories (Accordion) ───
 let categoriesData = []; // cache for modal dropdown
 
@@ -81,6 +98,10 @@ async function loadCategories() {
     if (expandedParents.size === 0) {
         let found = false;
         for (const p of parents) {
+            if (p.id === currentCategoryId && p.is_leaf) {
+                found = true;
+                break;
+            }
             if (p.children) {
                 for (const c of p.children) {
                     if (c.id === currentCategoryId) {
@@ -108,6 +129,19 @@ async function loadCategories() {
 
     list.innerHTML = parents
         .map((p) => {
+            if (p.is_leaf) {
+                return `
+                <div class="sidebar-item ${p.id === currentCategoryId ? "active" : ""}" data-id="${p.id}">
+                    <span class="sidebar-item-text">${p.name}</span>
+                    <span class="sidebar-item-count">${p.pdf_count || 0}</span>
+                    <div class="sidebar-item-actions">
+                        <button class="btn-icon btn-icon-add" title="Thêm danh mục con" onclick="openAddCategoryForParent(${p.id}, event)">+</button>
+                        <button class="btn-icon" title="Sửa" onclick="editCategory(${p.id}, event)">✏️</button>
+                        <button class="btn-icon btn-icon-danger" title="Xóa" onclick="deleteCategory(${p.id}, event)">🗑️</button>
+                    </div>
+                </div>`;
+            }
+
             const isExpanded = expandedParents.has(p.id);
 
             const childrenHtml = (p.children || [])
@@ -223,6 +257,15 @@ async function loadCategories() {
             closeAdminSidebar();
         });
     });
+
+    if (!currentCategoryId) {
+        const firstCat = findFirstSelectableCategory(parents);
+        if (firstCat) {
+            currentCategoryId = firstCat.id;
+            loadCategories();
+            loadPdfs(currentCategoryId);
+        }
+    }
 }
 
 // Open add category modal pre-filled with parent
@@ -244,7 +287,7 @@ function openAddCategoryForParent(parentId, event) {
 
 function _populateParentDropdown(selectedParentId) {
     const select = document.getElementById("cat-parent-id");
-    let html = "";
+    let html = `<option value="">Không có (danh mục gốc)</option>`;
     for (const p of categoriesData) {
         html += `<optgroup label="${p.name}">`;
         // Root itself as an option
@@ -260,6 +303,9 @@ function _populateParentDropdown(selectedParentId) {
         html += `</optgroup>`;
     }
     select.innerHTML = html;
+    if (selectedParentId === null || selectedParentId === undefined) {
+        select.value = "";
+    }
 }
 
 async function editCategory(id, event) {
@@ -305,8 +351,8 @@ document.getElementById("btn-add-category").addEventListener("click", () => {
     document.getElementById("cat-file").value = "";
     document.getElementById("cat-pdf-title").value = "";
     document.getElementById("cat-pdf-title-group").style.display = "none";
-    // Populate parent dropdown (select first)
-    _populateParentDropdown(categoriesData.length > 0 ? categoriesData[0].id : null);
+    // Populate parent dropdown (default: create root)
+    _populateParentDropdown(null);
     showModal("category-modal");
 });
 
@@ -344,7 +390,9 @@ document.getElementById("category-form").addEventListener("submit", async (e) =>
             const parentId = document.getElementById("cat-parent-id").value;
             const formData = new FormData();
             formData.append("name", name);
-            formData.append("parent_id", parentId);
+            if (parentId) {
+                formData.append("parent_id", parentId);
+            }
 
             const file = document.getElementById("cat-file").files[0];
             if (file) {

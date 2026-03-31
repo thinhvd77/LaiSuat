@@ -95,35 +95,46 @@ def dashboard():
 @login_required
 def create_category():
     name = request.form.get("name", "").strip()
-    parent_id = request.form.get("parent_id")
+    parent_id = request.form.get("parent_id", "").strip()
 
     if not name:
         return {"error": "Tên danh mục là bắt buộc"}, 400
 
-    if not parent_id:
-        return {"error": "Danh mục cha là bắt buộc"}, 400
+    parent = None
+    if parent_id:
+        try:
+            parent_pk = int(parent_id)
+        except ValueError:
+            return {"error": "Danh mục cha không hợp lệ"}, 400
 
-    parent = db.session.get(Category, int(parent_id))
-    if not parent or not parent.can_have_children:
-        return {"error": "Danh mục này không thể có danh mục con"}, 400
+        parent = db.session.get(Category, parent_pk)
+        if not parent or not parent.can_have_children:
+            return {"error": "Danh mục này không thể có danh mục con"}, 400
 
-    if parent.pdfs.count() > 0:
-        return {"error": "Danh mục đang có tài liệu, không thể thêm danh mục con"}, 400
+        if parent.pdfs.count() > 0:
+            return {"error": "Danh mục đang có tài liệu, không thể thêm danh mục con"}, 400
+
+        sort_order_filter = Category.parent_id == parent.id
+    else:
+        sort_order_filter = Category.parent_id.is_(None)
 
     max_order = (
         db.session.query(db.func.max(Category.sort_order))
-        .filter(Category.parent_id == parent.id)
+        .filter(sort_order_filter)
         .scalar()
         or 0
     )
     cat = Category(
         name=name,
-        parent_id=parent.id,
+        parent_id=parent.id if parent else None,
         sort_order=max_order + 1,
     )
     db.session.add(cat)
     db.session.commit()
-    logger.info("Category created: %s under %s (by %s)", cat.name, parent.name, current_user.username)
+    if parent:
+        logger.info("Category created: %s under %s (by %s)", cat.name, parent.name, current_user.username)
+    else:
+        logger.info("Root category created: %s (by %s)", cat.name, current_user.username)
 
     # Optional: upload PDF file along with the category
     file = request.files.get("file")
@@ -240,7 +251,7 @@ def upload_pdf():
     if not cat:
         return {"error": "Không tìm thấy danh mục"}, 404
 
-    if cat.depth == 0 or not cat.is_leaf:
+    if not cat.is_leaf:
         return {"error": "Chỉ upload vào danh mục lá (không có danh mục con)"}, 400
 
     valid, error_msg = _validate_pdf(file)
