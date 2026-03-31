@@ -537,3 +537,21 @@ class TestThreeLevelCategories:
             "/admin/pdfs", data=data, content_type="multipart/form-data"
         )
         assert resp.status_code == 400
+
+
+class TestNoCacheHeaders:
+    """Test cache prevention headers on admin routes."""
+
+    def test_admin_dashboard_has_no_cache_headers(self, auth_client):
+        """Admin dashboard should have no-cache headers."""
+        response = auth_client.get("/admin")
+        assert response.headers.get("Cache-Control") == "no-store, no-cache, must-revalidate, max-age=0"
+        assert response.headers.get("Pragma") == "no-cache"
+        assert response.headers.get("Expires") == "0"
+
+    def test_admin_login_page_has_no_cache_headers(self, client):
+        """Admin login page should have no-cache headers."""
+        response = client.get("/admin/login")
+        assert response.headers.get("Cache-Control") == "no-store, no-cache, must-revalidate, max-age=0"
+        assert response.headers.get("Pragma") == "no-cache"
+        assert response.headers.get("Expires") == "0"
