@@ -62,7 +62,7 @@ def login():
 def logout():
     logger.info("Admin logout: %s", current_user.username)
     logout_user()
-    return redirect(url_for("admin.login"))
+    return redirect(url_for("public.index"))
 
 
 @admin_bp.route("/change-password", methods=["GET", "POST"])

@@ -63,7 +63,8 @@ class TestLogin:
     def test_logout(self, auth_client):
         resp = auth_client.post("/admin/logout", follow_redirects=True)
         assert resp.status_code == 200
-        assert "Đăng nhập".encode() in resp.data
+        # After logout, user should be redirected to homepage
+        assert "Chọn danh mục để xem lãi suất".encode() in resp.data
 
 
 class TestChangePassword:
@@ -555,3 +556,13 @@ class TestNoCacheHeaders:
         assert response.headers.get("Cache-Control") == "no-store, no-cache, must-revalidate, max-age=0"
         assert response.headers.get("Pragma") == "no-cache"
         assert response.headers.get("Expires") == "0"
+
+
+class TestLogoutRedirect:
+    """Test logout redirects to homepage."""
+
+    def test_logout_redirects_to_homepage(self, auth_client):
+        """Logout should redirect to homepage, not login page."""
+        response = auth_client.post("/admin/logout")
+        assert response.status_code == 302
+        assert response.headers.get("Location") == "/"
