@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from flask import abort, render_template, request, session
+from flask_login import current_user
 from sqlalchemy.exc import IntegrityError
 
 from extensions import db
@@ -167,6 +168,10 @@ def init_site_gate(app):
 
         path = request.path or "/"
         if not is_public_protected_path(path):
+            return None
+
+        # Skip site gate for authenticated admin users
+        if current_user.is_authenticated:
             return None
 
         expected_password = app.config.get("SITE_GATE_PASSWORD", "")
