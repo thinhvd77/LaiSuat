@@ -6,5 +6,6 @@ venv/
 uploads/*.pdf
 ip_whitelist.txt
 nginx/ip_whitelist.conf
-instance/database.db-shm
-instance/database.db-wal
+instance/*
+.env
+tests/

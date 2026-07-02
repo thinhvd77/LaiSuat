@@ -53,6 +53,7 @@ def login():
             return redirect(url_for("admin.dashboard"))
 
         flash("Sai tên đăng nhập hoặc mật khẩu", "error")
+        return render_template("login.html"), 401
 
     return render_template("login.html")
 
