@@ -9,3 +9,4 @@ nginx/ip_whitelist.conf
 instance/*
 .env
 tests/
+logs/
